@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Built with the Xcode of the macos-26 image, the oldest Xcode Rapto supports. The tests
+    # are compiled but not run: they start the app and need a logged-in desktop with real
+    # windows.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Xcode
+        run: |
+          ls /Applications | grep -i xcode
+          xcodebuild -version
+      - name: Build the app and compile the tests
+        run: |
+          xcodebuild build-for-testing \
+            -project Rapto.xcodeproj -scheme Rapto -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Rapto Terminology">
+    <suite name="Rapto Suite" code="Rpto" description="Commands for launchers such as Raycast. Lists are returned as JSON text.">
+        <command name="list windows" code="RptoLsWn" description="Every open window on every desktop, most recently used first.">
+            <cocoa class="RaptoListWindowsCommand"/>
+            <result type="text" description="JSON array of objects with id, app, title, appPath, desktop, isCurrentDesktop and display."/>
+        </command>
+        <command name="focus window" code="RptoFcWn" description="Bring a window to the front, switching to its desktop if needed.">
+            <cocoa class="RaptoFocusWindowCommand"/>
+            <direct-parameter type="integer" description="The id from list windows."/>
+            <result type="boolean" description="False when the window is no longer open."/>
+        </command>
+        <command name="desktop info" code="RptoDsIn" description="Mode and layouts of the desktop on screen now, on the display with the pointer.">
+            <cocoa class="RaptoDesktopInfoCommand"/>
+            <result type="text" description="JSON object with mode, display, currentLayoutID, modes and layouts."/>
+        </command>
+        <command name="apply layout" code="RptoApLy" description="Arrange the windows of the current desktop into a layout (Manual), or make it the layout for ⌥ while dragging (Drag to Snap).">
+            <cocoa class="RaptoApplyLayoutCommand"/>
+            <direct-parameter type="text" description="The layout id from desktop info."/>
+            <result type="boolean" description="False when the layout doesn't exist or the desktop's mode doesn't use layouts."/>
+        </command>
+        <command name="set mode" code="RptoStMd" description="Change the mode of the current desktop.">
+            <cocoa class="RaptoSetModeCommand"/>
+            <direct-parameter type="text" description="A mode id from desktop info."/>
+            <result type="boolean"/>
+        </command>
+        <command name="list workspaces" code="RptoLsWs" description="Saved workspaces.">
+            <cocoa class="RaptoListWorkspacesCommand"/>
+            <result type="text" description="JSON array of objects with id, name, apps and displays."/>
+        </command>
+        <command name="open workspace" code="RptoOpWs" description="Bring back the apps of a workspace into their places, launching the ones that are not running.">
+            <cocoa class="RaptoOpenWorkspaceCommand"/>
+            <direct-parameter type="text" description="The workspace id from list workspaces."/>
+            <result type="boolean" description="False when the workspace doesn't exist."/>
+        </command>
+    </suite>
+</dictionary>

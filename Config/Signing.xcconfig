@@ -1,0 +1,11 @@
+// Signing settings shared by every target.
+//
+// The development team is not kept in the repository. To sign with your own team:
+//
+//   cp Config/Signing.local.xcconfig.example Config/Signing.local.xcconfig
+//
+// and fill it in. Signing.local.xcconfig is ignored by git.
+
+DEVELOPMENT_TEAM =
+
+#include? "Signing.local.xcconfig"

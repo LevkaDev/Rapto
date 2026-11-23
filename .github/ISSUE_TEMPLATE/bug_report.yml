@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in Rapto does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. Security problems do not belong here: see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Rapto version
+      description: Settings → About
+      placeholder: "5.77"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "26.1"
+    validations:
+      required: true
+  - type: input
+    id: displays
+    attributes:
+      label: Displays and desktops
+      description: How many displays, how many desktops, and whether "Displays have separate Spaces" is on
+      placeholder: "2 displays, 4 desktops, separate Spaces on"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      multiple: true
+      options:
+        - Manual
+        - Auto Tiling
+        - Drag to Snap
+        - None
+        - Not related to a mode
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, what you expected and what happened. A short screen recording helps.
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: App involved
+      description: If the problem is with one app's windows
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: >
+        Turn on file logging in Settings, reproduce the problem and attach
+        ~/Library/Logs/Rapto/debug.log. It can contain app names and window titles,
+        so look through it before sharing.

@@ -1,0 +1,15 @@
+{
+  "name": "rapto-onboarding-animations",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsx build.ts"
+  },
+  "dependencies": {
+    "@clayzo/animation": "^0.3.21"
+  },
+  "devDependencies": {
+    "clayzo": "^0.3.21",
+    "tsx": "^4.23.15"
+  }
+}

@@ -1,0 +1,14 @@
+// Copy to Signing.local.xcconfig (ignored by git) and fill in.
+//
+// Your Apple Developer Team ID, 10 characters. A free Apple ID works: Xcode shows the
+// team under Settings → Accounts, and the ID under Signing & Capabilities.
+// macOS ties the Accessibility and Screen Recording permissions to the app's signature,
+// so a real team keeps them between builds.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+
+// No Apple ID at hand? Leave the team as it is and sign ad hoc instead. The app runs,
+// but macOS asks for the permissions again after every build. This works for the Debug
+// configuration only: Release is signed with a Developer ID certificate.
+// CODE_SIGN_IDENTITY = -
+// CODE_SIGN_STYLE = Manual
+// DEVELOPMENT_TEAM =
