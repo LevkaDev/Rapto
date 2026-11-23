@@ -10,6 +10,10 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+## [6.0] - 2026-11-23
+
+The first open-source release.
+
 ### Added
 - `Settings → About → Troubleshooting → Report a Problem` opens the repository's bug form or a
   mail to support with the Rapto and macOS versions, displays, desktops and modes filled in
