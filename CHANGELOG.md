@@ -4,8 +4,9 @@ Technical changes to Rapto, for developers. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). What changed for users is in
 [RELEASE_NOTES.md](RELEASE_NOTES.md) and on [rapto.app/changelog](https://rapto.app/changelog).
 
-This file starts with the first open-source release. The releases before it, 2.0 to 5.76,
-are described on [rapto.app/changelog](https://rapto.app/changelog).
+This file starts with 5.77. Releases 5.77 and 5.78 came out of the closed repository; 6.0 is
+the first open-source release. Earlier releases, 2.0 to 5.76, are described on
+[rapto.app/changelog](https://rapto.app/changelog).
 
 ## [Unreleased]
 
