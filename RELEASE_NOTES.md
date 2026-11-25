@@ -1,5 +1,18 @@
 # Release Notes
 
+## Version 6.2
+
+### New
+- 
+
+### Improvements
+- 
+
+### Fixes
+- 
+
+---
+
 ## Version 6.1
 
 ### New

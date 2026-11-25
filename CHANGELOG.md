@@ -10,6 +10,8 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+## [6.1] - 2026-11-25
+
 ### Added
 - **Window Flow** (`WindowFlowController`, `WindowFlowBackdropArt`, `WindowUsageTracker`): visual
   3D window strip across all desktops of the active display, bound to `⌃⌥S` in the Rapto preset
