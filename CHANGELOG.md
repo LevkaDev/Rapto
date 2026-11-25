@@ -10,6 +10,14 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Fixed
+- Moving a window to another desktop failed for apps that draw their title bar as a page and
+  have controls right after the window buttons (Orca): the spot next to the buttons answers as
+  a group inside web content, was taken as a confirmed drag area and pressed without checking,
+  and the window stayed behind. `SpaceBarController.grabPlan` now treats a spot that counts as a
+  drag area only because web content was let through as a guess and probes it, followed by the
+  guessed spots along the title bar (`probeOrder(first:then:)`).
+
 ## [6.1] - 2026-11-25
 
 ### Added

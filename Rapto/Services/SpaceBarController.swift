@@ -1300,8 +1300,23 @@ final class SpaceBarController: ObservableObject {
         }
         // Vivaldi and apps alike draw their title bar as a web page, which still drags the window.
         // A page never starts level with the window buttons, so web content there is title bar.
-        if let point = firstDragPoint(nextToButtons, frame: frame, pid: pid, inToolbarOnly: false, webIsTitleBar: true) {
-            return GrabPlan(points: [point], isGuess: false)
+        if let spot = firstDragSpot(nextToButtons, frame: frame, pid: pid, inToolbarOnly: false, webIsTitleBar: true) {
+            guard spot.isWebContent else {
+                return GrabPlan(points: [spot.point], isGuess: false)
+            }
+            // MARK: - Workaround: Web content next to the window buttons is not always title bar
+            // Cause: Orca draws its title bar as a page and has controls right after the window
+            //        buttons. The spot answers as a plain group inside the page, like Vivaldi's
+            //        title bar does, but a press there drags nothing and the window stays behind.
+            // Context: Such a spot is a guess, so it is probed like the others: it goes first, as
+            //          it works for Vivaldi, and the guessed spots along the title bar follow.
+            var guesses: [CGPoint] = []
+            if let button {
+                let xs = SpaceBarController.guessedGrabXs(buttonsMaxX: button.maxX, frameMinX: frame.minX, frameMaxX: frame.maxX)
+                guesses = barePagePoints(xs.map { CGPoint(x: $0, y: button.midY) }, frame: frame, pid: pid)
+                    .filter { SpaceBarController.windowIsOnTop(pid: pid, at: $0, among: SpaceBarController.windowsFrontToBack()) }
+            }
+            return GrabPlan(points: SpaceBarController.probeOrder(first: spot.point, then: guesses), isGuess: true)
         }
         // Browsers with tabs in a sidebar hide these buttons and have empty toolbar space in the corners.
         let alongTop = [frame.midX, frame.minX + 90, frame.minX + 20, frame.minX + 50, frame.minX + 130, frame.maxX - 60, frame.maxX - 150]
@@ -1324,6 +1339,16 @@ final class SpaceBarController: ObservableObject {
         let points = barePagePoints(xs.map { CGPoint(x: $0, y: button.midY) }, frame: frame, pid: pid)
             .filter { SpaceBarController.windowIsOnTop(pid: pid, at: $0, among: SpaceBarController.windowsFrontToBack()) }
         return points.isEmpty ? nil : GrabPlan(points: points, isGuess: true)
+    }
+
+    /// The spots to probe when the first one is itself a guess: it stays first, and guessed
+    /// spots too close to it or to each other are left out, as they are the same part of the bar.
+    nonisolated static func probeOrder(first: CGPoint, then guesses: [CGPoint]) -> [CGPoint] {
+        var result = [first]
+        for point in guesses where !result.contains(where: { abs($0.x - point.x) < 24 && abs($0.y - point.y) < 24 }) {
+            result.append(point)
+        }
+        return result
     }
 
     /// Every window on screen, front to back, with its owner and frame (top-left origin).
@@ -1406,6 +1431,13 @@ final class SpaceBarController: ObservableObject {
     private func firstDragPoint(
         _ candidates: [CGPoint], frame: CGRect, pid: pid_t, inToolbarOnly: Bool, webIsTitleBar: Bool = false
     ) -> CGPoint? {
+        firstDragSpot(candidates, frame: frame, pid: pid, inToolbarOnly: inToolbarOnly, webIsTitleBar: webIsTitleBar)?.point
+    }
+
+    /// `isWebContent`: the spot counts as a drag area only because web content was let through.
+    private func firstDragSpot(
+        _ candidates: [CGPoint], frame: CGRect, pid: pid_t, inToolbarOnly: Bool, webIsTitleBar: Bool = false
+    ) -> (point: CGPoint, isWebContent: Bool)? {
         let systemWide = AXUIElementCreateSystemWide()
         for point in candidates where frame.contains(point) {
             var hit: AXUIElement?
@@ -1420,7 +1452,7 @@ final class SpaceBarController: ObservableObject {
             logger.notice("Move: at \(String(describing: point), privacy: .public) pid \(hitPID) roles \(chain, privacy: .public)")
             guard hitPID == pid, isDragArea(hit, webIsTitleBar: webIsTitleBar) else { continue }
             if inToolbarOnly, !chain.contains(kAXToolbarRole) { continue }
-            return point
+            return (point, webIsTitleBar && !isDragArea(hit, webIsTitleBar: false))
         }
         return nil
     }
