@@ -11,6 +11,14 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- An app whose windows come from a process without a bundle identifier (MetaTrader 5 and other
+  apps run through Wine: the windows belong to a `wine` helper inside the app bundle) could not
+  be ignored: `Ignored Apps` matches by bundle identifier, the helper has none, and the app was
+  missing from `Add Running App`. Such a process now counts as the app whose bundle its
+  executable lies in (`AppBundleLookup`), for the window list, Drag to Snap, the Desktops Bar
+  and the Settings list. Limits: a Wine outside every app bundle still has no identifier, and
+  the programs of one launcher (CrossOver) count as that launcher. The Ignored Apps text in
+  Settings says so.
 - A window dropped on another window (a move, not a swap) was given the target window's own
   frame. When that window did not sit in its slot (an app that refuses the slot's size), the
   dragged window left the layout with it. `WindowSwapService.performMove` now uses the target's

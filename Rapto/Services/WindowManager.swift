@@ -95,7 +95,7 @@ class WindowManager {
             let ownerName = dict[kCGWindowOwnerName as String] as? String ?? ""
             
             let runningApp = NSRunningApplication(processIdentifier: ownerPID)
-            let bundleIdentifier = runningApp?.bundleIdentifier
+            let bundleIdentifier = AppBundleLookup.bundleIdentifier(for: runningApp)
             
             guard let boundsDict = dict[kCGWindowBounds as String] as? [String: CGFloat] else {
                 return nil

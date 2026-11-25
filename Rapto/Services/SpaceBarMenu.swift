@@ -229,7 +229,7 @@ extension AppState {
     /// when right-clicking an app icon in the Desktops Bar.
     func appRulesSubmenuItem(for glyph: SpaceBarGlyph) -> NSMenuItem? {
         let resolvedBundleID = glyph.bundleIdentifier
-            ?? NSRunningApplication(processIdentifier: glyph.pid)?.bundleIdentifier
+            ?? AppBundleLookup.bundleIdentifier(for: NSRunningApplication(processIdentifier: glyph.pid))
         guard let bundleID = resolvedBundleID,
               Self.canManageAppRules(forBundleIdentifier: bundleID) else {
             return nil

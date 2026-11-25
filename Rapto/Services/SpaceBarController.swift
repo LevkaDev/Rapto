@@ -2083,7 +2083,7 @@ final class SpaceBarController: ObservableObject {
                     let runningApp = NSRunningApplication(processIdentifier: pid)
                     return SpaceBarGlyph(
                         pid: pid,
-                        bundleIdentifier: runningApp?.bundleIdentifier,
+                        bundleIdentifier: AppBundleLookup.bundleIdentifier(for: runningApp),
                         appName: windows.first?.ownerName ?? runningApp?.localizedName ?? "App",
                         icon: icon(for: pid),
                         windows: windows
