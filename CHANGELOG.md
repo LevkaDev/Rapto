@@ -10,6 +10,12 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Security
+- Sparkle 2.8.1 → 2.10.1 (`Package.resolved`; the project now asks for 2.10.1 or later).
+  Versions up to 2.9.1 have two medium-severity advisories, GHSA-hg88-v3cw-3qrh (symlinks in
+  delta updates) and GHSA-g3hp-f6mg-559v (unvalidated connection to the installer); both
+  are fixed in 2.9.2.
+
 ## [6.0] - 2026-11-23
 
 The first open-source release.
