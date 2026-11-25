@@ -11,6 +11,9 @@
 ### Fixes: Desktops and workspaces
 - Moving a window to another desktop from the Desktops Bar now works for Orca and other apps whose title bar has buttons right after the window buttons.
 
+### Fixes: Manual and groups
+- A window dropped onto another window now lands in that window's slot, even when the other window doesn't fill its slot.
+
 ---
 
 ## Version 6.1
