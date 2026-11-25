@@ -10,6 +10,16 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Fixed
+- Resize shortcuts (`Shrink / Grow Width / Height`) changed only the size of the focused slot's
+  windows, anchored at the top left: neighbours did not follow, a slot could grow over its
+  neighbour or past the screen, and the rightmost and bottom slots could not be resized
+  toward their neighbours. `WindowResizeService.resizeSlot` now moves the border the slot
+  shares with a neighbour (right or bottom first, otherwise left or top;
+  `steppedFrame(ofSlot:direction:step:slotFrames:)`) through the same divider code as a drag,
+  so gaps, groups and minimum window sizes behave the same. A press that can't move anything
+  beeps.
+
 ## [6.0] - 2026-11-23
 
 The first open-source release.
