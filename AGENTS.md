@@ -132,7 +132,7 @@ written by strangers.
 | Why the code is this way: macOS quirks, invariants, delays, magic numbers | A comment in the code (CONTRIBUTING.md → Code style) |
 | The details of the change: cause, approach, what was tested | The commit body and the pull request description |
 | Build steps, structure, permissions changed | `README.md`, this file |
-| Something that could not be tested (needs a second display, a restart, a real app) | The pull request description, and `../rapto-internal/pending-tests.md` so it is shown before the next release |
+| Something that could not be tested (needs a second display, a restart, a real app) | The pull request description, and `../rapto-internal/pending-tests.md`, so that it is shown before the next release |
 | Plans, ideas, review findings, known issues, session notes, handoffs | `../rapto-internal` (see its `README.md` for where each goes); if it is missing, your reply. Never this repository |
 
 ## Repository hygiene
