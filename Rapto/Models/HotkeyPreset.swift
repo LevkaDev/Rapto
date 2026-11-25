@@ -531,11 +531,37 @@ class HotkeyPresetStorage {
     
     /// The base preset the user customized, with their overrides; a cleared shortcut is left out
     func loadCustomPreset() -> HotkeyPreset {
-        var bindings = HotkeyPreset.preset(for: loadBasePresetType()).bindings
-        for (action, binding) in loadCustomBindings() ?? [:] {
+        let bindings = Self.customBindings(
+            base: HotkeyPreset.preset(for: loadBasePresetType()).bindings,
+            custom: loadCustomBindings() ?? [:]
+        )
+        return HotkeyPreset(type: .custom, bindings: bindings)
+    }
+
+    /// Actions added to the presets after users had saved their own shortcuts. Their default
+    /// shortcut gives way to a shortcut the user has put on something else.
+    static let laterAddedActions: Set<HotkeyAction> = [.openWindowFlow]
+
+    /// The base preset with the user's changes on top. A later-added action the user has not set
+    /// stays without a shortcut when its default one is already taken by the user's own choice;
+    /// otherwise an update would put two actions on one shortcut.
+    static func customBindings(
+        base: [HotkeyAction: HotkeyBinding],
+        custom: [HotkeyAction: HotkeyBinding]
+    ) -> [HotkeyAction: HotkeyBinding] {
+        var bindings = base
+        for (action, binding) in custom {
             bindings[action] = binding.isCleared ? nil : binding
         }
-        return HotkeyPreset(type: .custom, bindings: bindings)
+        for action in laterAddedActions where custom[action] == nil {
+            guard let fallback = base[action] else { continue }
+            let taken = custom.contains { other, binding in
+                other != action && !binding.isCleared
+                    && binding.keyCode == fallback.keyCode && binding.modifiers == fallback.modifiers
+            }
+            if taken { bindings[action] = nil }
+        }
+        return bindings
     }
     
 }

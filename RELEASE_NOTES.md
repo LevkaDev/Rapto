@@ -3,10 +3,8 @@
 ## Version 6.1
 
 ### New
-- 
-
-### Improvements
-- 
+- Window Flow: press ⌃⌥S to see every window of this display, from all its desktops, as a strip of live previews. Scroll or use the arrow keys, press Return or click to open a window, Esc to go back. Windows you use most come first. Press B to change the backdrop. You can change the shortcut in Settings → Shortcuts.
+- Window Flow works without Screen Recording too: it then shows app icons and window titles instead of previews.
 
 ### Fixes: Shortcuts and Settings
 - Resize shortcuts now move the border between windows: the windows next to it follow, nothing overlaps and nothing goes past the edge of the screen. A window at the right or bottom edge of the screen resizes from its other side.

@@ -444,7 +444,10 @@ nonisolated enum WindowFlowBackdropArt {
         return context.createCGImage(behind, from: extent)
     }
 
-    static func glassSurface(size: CGSize) -> CGImage? {
+    /// The sheen changes only from top to bottom, so it is drawn as a narrow strip and the layer
+    /// stretches it over the screen. At screen size it took about 110 MB on a 5K-wide display.
+    static func glassSurface() -> CGImage? {
+        let size = CGSize(width: 4, height: 1024)
         guard let drawing = bitmap(size), let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
         let w = size.width, h = size.height
         let topSheen = [

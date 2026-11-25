@@ -126,3 +126,53 @@ struct WindowFlowTests {
         }
     }
 }
+
+@MainActor
+struct WindowFlowShortcutMergeTests {
+
+    private let flowDefault = HotkeyBinding(keyCode: 0x01, modifiers: UInt32(controlKey | optionKey))
+    private var base: [HotkeyAction: HotkeyBinding] { HotkeyPreset.rapto.bindings }
+
+    @Test("A user who changed other shortcuts still gets the Window Flow default")
+    func defaultIsKeptWhenFree() {
+        let custom: [HotkeyAction: HotkeyBinding] = [.restoreLayout: HotkeyBinding(keyCode: 0x0F, modifiers: UInt32(optionKey))]
+        let merged = HotkeyPresetStorage.customBindings(base: base, custom: custom)
+        #expect(merged[.openWindowFlow] == flowDefault)
+    }
+
+    @Test("The default gives way to a shortcut the user already put on another action")
+    func defaultYieldsToTheUsersShortcut() {
+        let merged = HotkeyPresetStorage.customBindings(base: base, custom: [.restoreLayout: flowDefault])
+        #expect(merged[.openWindowFlow] == nil)
+        #expect(merged[.restoreLayout] == flowDefault)
+    }
+
+    @Test("The user's own Window Flow shortcut is kept, whatever else it matches")
+    func ownChoiceIsKept() {
+        let own = HotkeyBinding(keyCode: 0x03, modifiers: UInt32(controlKey | optionKey))
+        let merged = HotkeyPresetStorage.customBindings(base: base, custom: [.openWindowFlow: own, .restoreLayout: flowDefault])
+        #expect(merged[.openWindowFlow] == own)
+    }
+
+    @Test("A cleared shortcut does not count as taken")
+    func clearedShortcutIsNotTaken() {
+        let merged = HotkeyPresetStorage.customBindings(base: base, custom: [.restoreLayout: .cleared])
+        #expect(merged[.openWindowFlow] == flowDefault)
+        #expect(merged[.restoreLayout] == nil)
+    }
+}
+
+struct WindowFlowCacheSizeTests {
+
+    @Test("A cached picture is scaled to fit and keeps its proportions")
+    func fitsInsideTheLimit() {
+        let size = WindowFlowLayout.fittedSize(CGSize(width: 4000, height: 1880), in: CGSize(width: 1536, height: 875))
+        #expect(size == CGSize(width: 1536, height: 722))
+    }
+
+    @Test("A picture that already fits is not enlarged")
+    func smallPictureStaysAsItIs() {
+        let size = WindowFlowLayout.fittedSize(CGSize(width: 800, height: 600), in: CGSize(width: 1536, height: 875))
+        #expect(size == CGSize(width: 800, height: 600))
+    }
+}

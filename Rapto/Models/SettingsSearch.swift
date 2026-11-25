@@ -235,7 +235,7 @@ enum SettingsSearch {
         SettingsSearchEntry(
             id: "shortcuts.windowFlow",
             title: "Window Flow",
-            subtitle: "Visual 3D window strip across all desktops of the active display (⌃⌥S)",
+            subtitle: "Visual 3D window strip across all desktops of the active display",
             section: "Window Focus",
             tab: .shortcuts,
             keywords: ["window flow", "visual switcher", "carousel", "strip", "cover flow", "preview", "alt tab"]

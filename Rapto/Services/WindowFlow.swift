@@ -93,6 +93,31 @@ nonisolated enum WindowFlowLayout {
             : CGSize(width: box.width, height: box.width / safeAspect)
     }
 
+    /// The size a picture of `pixels` gets to fit inside `limit` without growing.
+    static func fittedSize(_ pixels: CGSize, in limit: CGSize) -> CGSize {
+        guard pixels.width >= 1, pixels.height >= 1 else { return pixels }
+        let factor = min(1, limit.width / pixels.width, limit.height / pixels.height)
+        return CGSize(
+            width: max(1, (pixels.width * factor).rounded()),
+            height: max(1, (pixels.height * factor).rounded())
+        )
+    }
+
+    /// A smaller copy of the picture that fits `limit`; the picture itself when it already fits.
+    static func downscaled(_ image: CGImage, toFit limit: CGSize) -> CGImage {
+        let size = fittedSize(CGSize(width: image.width, height: image.height), in: limit)
+        guard Int(size.width) < image.width || Int(size.height) < image.height,
+              let context = CGContext(
+                  data: nil, width: Int(size.width), height: Int(size.height),
+                  bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return image }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(origin: .zero, size: size))
+        return context.makeImage() ?? image
+    }
+
     /// Excludes browser Picture-in-Picture mini-players and tiny utility panels that sometimes sit at layer 0.
     static func isExcludedMiniPlayer(title: String, size: CGSize?) -> Bool {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -296,10 +321,10 @@ nonisolated struct WindowFlowArt: @unchecked Sendable {
     let metalPipeline: WindowFlowMetalPipeline?
     let glassSurface: CGImage?
 
-    init(pixels: CGSize, outer: CGSize, existingPipeline: WindowFlowMetalPipeline? = nil) {
+    init(pixels: CGSize, existingPipeline: WindowFlowMetalPipeline? = nil) {
         self.pixels = pixels
         self.metalPipeline = existingPipeline ?? WindowFlowMetalPipeline.build()
-        self.glassSurface = WindowFlowBackdropArt.glassSurface(size: outer)
+        self.glassSurface = WindowFlowBackdropArt.glassSurface()
     }
 }
 
@@ -375,6 +400,8 @@ final class WindowFlowController {
     private var workspaceObserver: NSObjectProtocol?
     private var isOpening = false
     /// Bounded LRU cache of card previews shown immediately until fresh captures arrive.
+    /// Kept between openings, so the pictures are stored at side-card size: at centre-card size
+    /// one took up to 30 MB on a 5K-wide display.
     private var thumbnails: [CGWindowID: CGImage] = [:]
     private var thumbnailAccessedAt: [CGWindowID: Date] = [:]
     /// Per-space wallpapers held only while Window Flow is open (freed in `close()`).
@@ -401,9 +428,9 @@ final class WindowFlowController {
         self.theme = savedTheme
         self.iconModeUseOverlayScrim = UserDefaults.standard.bool(forKey: Self.iconOverlayScrimDefaultsKey)
         if let screen = NSScreen.main {
-            let (pixels, outer) = Self.artSizes(for: screen)
+            let pixels = Self.artPixels(for: screen)
             Task.detached(priority: .utility) { [weak self] in
-                let art = WindowFlowArt(pixels: pixels, outer: outer)
+                let art = WindowFlowArt(pixels: pixels)
                 await self?.store(art)
             }
         }
@@ -415,6 +442,24 @@ final class WindowFlowController {
 
     private func store(_ art: WindowFlowArt) {
         if self.art == nil { self.art = art }
+    }
+
+    /// Pixels of a side card on that screen: all a cached picture has to fill until a fresh one arrives.
+    private static func cachePixelLimit(for screen: NSScreen) -> CGSize {
+        CGSize(
+            width: screen.frame.width * 0.20 * screen.backingScaleFactor,
+            height: screen.frame.height * 0.27 * screen.backingScaleFactor
+        )
+    }
+
+    /// Scales the picture down for the cache off the main thread, then stores it.
+    private func cacheThumbnail(_ image: CGImage, for windowID: CGWindowID, limit: CGSize) {
+        Task { [weak self] in
+            let small = await Task.detached(priority: .utility) {
+                WindowFlowLayout.downscaled(image, toFit: limit)
+            }.value
+            self?.storeThumbnail(small, for: windowID)
+        }
     }
 
     private func storeThumbnail(_ image: CGImage, for windowID: CGWindowID) {
@@ -429,11 +474,9 @@ final class WindowFlowController {
         }
     }
 
-    private static func artSizes(for screen: NSScreen) -> (CGSize, CGSize) {
+    private static func artPixels(for screen: NSScreen) -> CGSize {
         let scale = screen.backingScaleFactor
-        let pixels = CGSize(width: screen.frame.width * scale, height: screen.frame.height * scale)
-        let outer = CGSize(width: pixels.width + decorMargin * 2 * scale, height: pixels.height + decorMargin * 2 * scale)
-        return (pixels, outer)
+        return CGSize(width: screen.frame.width * scale, height: screen.frame.height * scale)
     }
 
     private func backdrop(_ theme: WindowFlowTheme, art: WindowFlowArt, shot: CGImage?) -> WindowFlowBackdrop {
@@ -578,6 +621,7 @@ final class WindowFlowController {
 
         var heroImage: CGImage?
         var screenShot: CGImage?
+        var preloaded: [(CGWindowID, CGImage)] = []
         let needDisplayNow = hasLivePreviews && (theme == .glass)
         if hasLivePreviews {
             // Pre-capture the visible neighbour cards alongside the hero window before showing the panel,
@@ -615,12 +659,13 @@ final class WindowFlowController {
             let (capturedHero, initialScreenShot, neighborShots) = await (heroShot, displayShot, preloadedNeighbors)
             heroImage = capturedHero
             screenShot = initialScreenShot
-            for (id, img) in neighborShots { storeThumbnail(img, for: id) }
+            preloaded = neighborShots
         }
+        let cacheLimit = Self.cachePixelLimit(for: screen)
 
-        let (pixels, outer) = Self.artSizes(for: screen)
+        let pixels = Self.artPixels(for: screen)
         if art?.pixels != pixels {
-            art = WindowFlowArt(pixels: pixels, outer: outer, existingPipeline: art?.metalPipeline)
+            art = WindowFlowArt(pixels: pixels, existingPipeline: art?.metalPipeline)
         }
         guard let art else { return }
         let overlayBackdrop = WindowFlowBackdrop(name: "Overlay", skyMode: nil, image: nil, decor: [], vignette: 0.44)
@@ -658,6 +703,10 @@ final class WindowFlowController {
                     thumbnailAccessedAt[item.id] = Date()
                     view.setImage(cached, for: item.id, animated: false)
                 }
+            }
+            for (id, image) in preloaded {
+                view.setImage(image, for: id, animated: false)
+                cacheThumbnail(image, for: id, limit: cacheLimit)
             }
             if let heroImage { view.setImage(heroImage, for: items[0].id, animated: false) }
         } else {
@@ -751,7 +800,11 @@ final class WindowFlowController {
         onVisibilityChanged?(true)
         view.setBackdrop(backdrop)
         view.start()
-        if startKeyTap() {
+        // MARK: - Workaround: Secure Input
+        // Cause: While another app holds Secure Input (a password field, a terminal's Secure Keyboard
+        //        Entry) event taps get no keyboard events, yet the shortcut still opens Window Flow.
+        // Context: The keys would go to the app underneath, so take the keyboard as a key window then.
+        if !IsSecureEventInputEnabled(), startKeyTap() {
             panel.allowKey = false
             panel.orderFrontRegardless()
             installBrowsingActivationObserver()
@@ -807,7 +860,7 @@ final class WindowFlowController {
             guard let window = shareable[item.id] else { continue }
             Task { [weak self, weak view] in
                 guard let image = await WindowFlowCapture.window(window, maxPixels: cardPixels) else { return }
-                self?.storeThumbnail(image, for: item.id)
+                self?.cacheThumbnail(image, for: item.id, limit: cacheLimit)
                 view?.setImage(image, for: item.id, animated: true)
             }
         }
@@ -1573,6 +1626,11 @@ final class WindowFlowView: NSView {
     private let backdropLayer = CALayer()
     private let metalSkyLayer: WindowFlowMetalSkyLayer?
     private var activeSkyMode: Int32?
+    /// Seconds the sky has been on screen, over all openings. The shader takes time as a 32-bit
+    /// float: seconds since boot lose precision after a few days of uptime (steps of 1/8 s after
+    /// two weeks) and the clouds would move in jumps. This clock stays small and the sky goes on
+    /// from where it was.
+    private static var skyClock: Double = 0
     /// Holds the cards and gives them perspective. A flat card at depth 0 is drawn exactly
     /// at its frame, which the pictures that stand in for real windows rely on.
     private let stage = CALayer()
@@ -1760,7 +1818,7 @@ final class WindowFlowView: NSView {
             vignette.isHidden = true
             sky.opacity = currentFade
             sky.isHidden = false
-            sky.drawSky(mode: skyMode, time: CACurrentMediaTime(), lean: lean)
+            sky.drawSky(mode: skyMode, time: Self.skyClock, lean: lean)
         } else {
             metalSkyLayer?.isHidden = true
             vignette.isHidden = false
@@ -2207,6 +2265,7 @@ final class WindowFlowView: NSView {
         }
         let dt = min(max(link.targetTimestamp - lastTimestamp, 0), 0.05)
         lastTimestamp = link.targetTimestamp
+        Self.skyClock += dt
         open.step(dt)
         if isScrolling, !scrollHasPhases, ProcessInfo.processInfo.systemUptime - lastScrollTime > 0.12 {
             landScroll()
@@ -2401,7 +2460,7 @@ final class WindowFlowView: NSView {
                 x: bounds.midX - lean.x * 38,
                 y: bounds.midY - lean.y * 22
             )
-            sky.drawSky(mode: skyMode, time: time, lean: lean)
+            sky.drawSky(mode: skyMode, time: Self.skyClock, lean: lean)
         }
         for (index, entry) in decorLayers.enumerated() {
             let phaseAngle = Double(index) * 2.1

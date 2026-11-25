@@ -19,7 +19,11 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
   at slot 0, previous genuine window at slot 1, 2.5-hour half-life decay with noise filtering and
   capped active dwell at slots 2+), bounded thumbnail cache, seamless cross-desktop handoff using
   per-space `SLSCopyWindowsWithOptionsAndTags` z-order, and an app-icon overlay fallback with a
-  Settings shortcut banner when Screen Recording permission is off.
+  Settings shortcut banner when Screen Recording permission is off. Cached previews are kept at
+  side-card size. Keys are read through a session event tap while browsing; under Secure Input the
+  panel takes the keyboard as a key window instead. A user whose own shortcut already uses the
+  Window Flow default keeps it, and Window Flow stays unbound
+  (`HotkeyPresetStorage.customBindings`).
 
 ### Fixed
 - Resize shortcuts (`Shrink / Grow Width / Height`) changed only the size of the focused slot's

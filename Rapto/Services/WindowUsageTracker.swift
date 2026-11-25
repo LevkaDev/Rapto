@@ -312,7 +312,7 @@ final class WindowUsageTracker {
             let s = String(format: "%.2f", ranker.score(for: entry.id, at: now))
             return "#\(idx) \(entry.appName)(\(entry.id), \(s))"
         }.joined(separator: ", ")
-        debugLog("WindowStrip", "Smart order [prev=\(ranker.previousWindow(excluding: currentWindowID).map(String.init) ?? "none")]: \(summary)")
+        debugLog("WindowFlow", "Smart order [prev=\(ranker.previousWindow(excluding: currentWindowID).map(String.init) ?? "none")]: \(summary)")
         return ordered
     }
 
@@ -416,7 +416,11 @@ final class WindowUsageTracker {
         axObservedPID = 0
     }
 
-    private static func userIdleSeconds() -> TimeInterval {
-        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null)
+    /// Seconds since the last key press, click, scroll or pointer move.
+    static func userIdleSeconds() -> TimeInterval {
+        // kCGAnyInputEventType. `.null` is a real event type that is never posted, so asking for it
+        // gives the time since login and every window would count as idle
+        let anyInput = CGEventType(rawValue: ~0) ?? .mouseMoved
+        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
     }
 }
