@@ -10,6 +10,16 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Fixed
+- Resize shortcuts (`Shrink / Grow Width / Height`) changed only the size of the focused slot's
+  windows, anchored at the top left: neighbours did not follow, a slot could grow over its
+  neighbour or past the screen, and the rightmost and bottom slots could not be resized
+  toward their neighbours. `WindowResizeService.resizeSlot` now moves the border the slot
+  shares with a neighbour (right or bottom first, otherwise left or top;
+  `steppedFrame(ofSlot:direction:step:slotFrames:)`) through the same divider code as a drag,
+  so gaps, groups and minimum window sizes behave the same. A press that can't move anything
+  beeps.
+
 ### Security
 - Sparkle 2.8.1 → 2.10.1 (`Package.resolved`; the project now asks for 2.10.1 or later).
   Versions up to 2.9.1 have two medium-severity advisories, GHSA-hg88-v3cw-3qrh (symlinks in

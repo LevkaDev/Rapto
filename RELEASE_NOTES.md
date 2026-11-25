@@ -8,8 +8,8 @@
 ### Improvements
 - 
 
-### Fixes
-- 
+### Fixes: Shortcuts and Settings
+- Resize shortcuts now move the border between windows: the windows next to it follow, nothing overlaps and nothing goes past the edge of the screen. A window at the right or bottom edge of the screen resizes from its other side.
 
 ---
 

@@ -430,7 +430,7 @@ class WindowResizeService: ObservableObject {
     }
 
     /// The widest space between two slots still taken as one border
-    private let maximumBorderGap: CGFloat = 60
+    nonisolated static let maximumBorderGap: CGFloat = 60
 
     /// Borders of the resized slot that moved and have slots on both sides.
     /// Every slot on the border moves with it, so the grid stays lined up.
@@ -443,13 +443,13 @@ class WindowResizeService: ObservableObject {
             // Slots on one border can drift apart (a layout rebuilt for one slot only); taking them all
             // as one border moves them together, which lines the border up again
             let sameSide = slotFrames.filter {
-                abs((resizedIsNear ? maxEdge($0.value, isVertical) : minEdge($0.value, isVertical)) - from) < maximumBorderGap
+                abs((resizedIsNear ? maxEdge($0.value, isVertical) : minEdge($0.value, isVertical)) - from) < Self.maximumBorderGap
             }
             func space(_ frame: CGRect) -> CGFloat {
                 resizedIsNear ? minEdge(frame, isVertical) - from : from - maxEdge(frame, isVertical)
             }
             let otherSide = slotFrames.filter {
-                space($0.value) > -maximumBorderGap && space($0.value) < maximumBorderGap
+                space($0.value) > -Self.maximumBorderGap && space($0.value) < Self.maximumBorderGap
             }
             guard !sameSide.isEmpty, !otherSide.isEmpty else { return nil }
             let gap = otherSide.values.map(space).filter { $0 >= 0 }.min() ?? 0
@@ -696,6 +696,96 @@ class WindowResizeService: ObservableObject {
         onResizeCompleted?(targets, screenID)
 
         logger.info("Slot-based resize adjustment completed, updated \(targets.count) slots, marked as manually modified")
+    }
+
+    // MARK: - Resizing by Shortcut
+
+    /// The slot's frame after one shortcut step, or nil when the slot has no neighbour on that axis.
+    /// A shortcut moves a border the slot shares with another slot: the right (or bottom) one, and
+    /// the left (or top) one when nothing is on that side. An edge at the screen's edge stays put,
+    /// so a slot never grows past the screen or leaves a hole next to it.
+    static func steppedFrame(
+        ofSlot index: Int,
+        direction: HotkeyManager.ResizeDirection,
+        step: CGFloat,
+        slotFrames: [Int: CGRect]
+    ) -> CGRect? {
+        guard let frame = slotFrames[index] else { return nil }
+        let isVertical = direction == .shrinkWidth || direction == .growWidth
+        let grows = direction == .growWidth || direction == .growHeight
+        func minEdge(_ frame: CGRect) -> CGFloat { isVertical ? frame.minX : frame.minY }
+        func maxEdge(_ frame: CGRect) -> CGFloat { isVertical ? frame.maxX : frame.maxY }
+        // The same test `movedDividers` uses to tell which slots are on a border
+        func isBorder(_ space: CGFloat) -> Bool { space > -maximumBorderGap && space < maximumBorderGap }
+
+        let others = slotFrames.filter { $0.key != index }.values
+        var result = frame
+        if others.contains(where: { isBorder(minEdge($0) - maxEdge(frame)) }) {
+            let change = grows ? step : -step
+            if isVertical { result.size.width += change } else { result.size.height += change }
+        } else if others.contains(where: { isBorder(minEdge(frame) - maxEdge($0)) }) {
+            let change = grows ? -step : step
+            if isVertical {
+                result.origin.x += change
+                result.size.width -= change
+            } else {
+                result.origin.y += change
+                result.size.height -= change
+            }
+        } else {
+            return nil
+        }
+        return result
+    }
+
+    /// Resizes a slot one shortcut step; its neighbours follow the way they do when its border is
+    /// dragged, with the same gaps and minimum sizes. Returns false when nothing moved: no
+    /// neighbour on that axis, a window that can't get smaller, a locked window or a drag under way.
+    func resizeSlot(_ slotIndex: Int, direction: HotkeyManager.ResizeDirection, step: CGFloat, onScreen screenID: String) -> Bool {
+        // A drag keeps its own snapshot of the slots in the same state
+        guard let layoutManager, !resizeInProgress, NSEvent.pressedMouseButtons & 1 == 0 else { return false }
+        let screenState = layoutManager.state(forScreenID: screenID)
+        guard screenState.isActive, screenState.slots.indices.contains(slotIndex) else { return false }
+        let slot = screenState.slots[slotIndex]
+        if slot.windows.contains(where: { isWindowLocked?($0.windowID) == true }) {
+            debugLog("WindowResizeService", " Shortcut resize - slot \(slotIndex) holds a locked window")
+            return false
+        }
+
+        resetResizeState()
+        defer { resetResizeState() }
+
+        let windows = windowManager.enumerateWindows()
+        var snapshots: [Int: CGRect] = [:]
+        for (index, slot) in screenState.slots.enumerated() {
+            snapshots[index] = slot.frame
+            let slotIDs = Set(slot.windows.map(\.windowID))
+            slotWindows[index] = windows.filter { slotIDs.contains($0.windowID) }
+        }
+
+        guard let newFrame = Self.steppedFrame(ofSlot: slotIndex, direction: direction, step: step, slotFrames: snapshots) else {
+            debugLog("WindowResizeService", " Shortcut resize - slot \(slotIndex) has no neighbour that way")
+            return false
+        }
+        // The dividers stop at the smallest size the slots on them can take
+        let dividers = movedDividers(originalSlotFrame: slot.frame, newSlotFrame: newFrame, slotFrames: snapshots)
+        let targets = targetFrames(dividers: dividers, resizedSlotIndex: slotIndex, newSlotFrame: newFrame, slotFrames: snapshots)
+        guard !dividers.isEmpty, targets.contains(where: { $0.value != snapshots[$0.key] }) else {
+            debugLog("WindowResizeService", " Shortcut resize - slot \(slotIndex) can't change any further")
+            return false
+        }
+
+        resizingScreenID = screenID
+        ResizeEchoGate.shared.isClosed = true
+        // No window is held by the pointer, so every window of the slot is placed: window 0 doesn't exist
+        applyResizeAdjustment(
+            resizedSlotIndex: slotIndex,
+            originalSlotFrame: slot.frame,
+            newSlotFrame: newFrame,
+            windowID: 0,
+            savedSlotSnapshots: snapshots
+        )
+        return true
     }
 
     // MARK: - State Reset

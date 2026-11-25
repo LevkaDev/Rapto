@@ -1208,31 +1208,14 @@ extension AppState {
             return
         }
         
-        let resizeAmount: CGFloat = 50 // pixels per keystroke
-        let slot = screenState.slots[slotIndex]
-        
-        // Start from the slot, which the last press updated; the window frames in the layout are
-        // not refreshed after a resize, so every press would ask for the same size again
-        var newFrame = slot.frame
-        
-        switch direction {
-        case .shrinkWidth:
-            newFrame.size.width = max(200, newFrame.size.width - resizeAmount)
-        case .growWidth:
-            newFrame.size.width += resizeAmount
-        case .shrinkHeight:
-            newFrame.size.height = max(200, newFrame.size.height - resizeAmount)
-        case .growHeight:
-            newFrame.size.height += resizeAmount
+        // The resize service moves the border the slot shares with its neighbours and saves the layout
+        let step: CGFloat = 50 // points per keystroke
+        guard windowResizeService?.resizeSlot(slotIndex, direction: direction, step: step, onScreen: screenID) == true else {
+            debugLog("AppState", " Resize ignored - slot \(slotIndex) on screen \(screenID) can't be resized \(direction)")
+            NSSound.beep()
+            return
         }
-        
-        for window in slot.windows {
-            accessibilityService.setWindowSize(window, size: newFrame.size)
-        }
-        
-        layoutManager.updateSlotFrame(slotIndex, frame: newFrame, forScreenID: screenID, isManualResize: true)
-        layoutManager.saveLayoutInfo(forSpaceID: spaceID(for: windowScreen), screenID: screenID)
-        
+
         debugLog("AppState", " Resized slot \(slotIndex) on screen \(screenID) \(direction)")
     }
     
