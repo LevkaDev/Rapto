@@ -19,6 +19,11 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
   and the Settings list. Limits: a Wine outside every app bundle still has no identifier, and
   the programs of one launcher (CrossOver) count as that launcher. The Ignored Apps text in
   Settings says so.
+- A window dropped on another window (a move, not a swap) was given the target window's own
+  frame. When that window did not sit in its slot (an app that refuses the slot's size), the
+  dragged window left the layout with it. `WindowSwapService.performMove` now uses the target's
+  slot (`moveTargetFrame`), as the swap already does, and skips the move when the target is in
+  no slot, so snap-back returns the dragged window.
 - Moving a window to another desktop failed for apps that draw their title bar as a page and
   have controls right after the window buttons (Orca): the spot next to the buttons answers as
   a group inside web content, was taken as a confirmed drag area and pressed without checking,
