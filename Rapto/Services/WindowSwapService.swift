@@ -712,12 +712,30 @@ class WindowSwapService: ObservableObject {
         }
     }
     
+    /// Where a window dropped on another window goes, or nil when the drop is not a move.
+    /// On a screen that keeps windows in slots it is the target's slot, not the target window's
+    /// own frame: a window that does not fit its slot (an app that refuses the size) sits
+    /// elsewhere, and the dragged window would follow it out of the layout. A target outside
+    /// every slot is no place for a window that has one. Without slots it is the target's frame.
+    static func moveTargetFrame(draggedSlot: CGRect?, targetSlot: CGRect?, targetWindowFrame: CGRect) -> CGRect? {
+        if let targetSlot { return targetSlot }
+        return draggedSlot == nil ? targetWindowFrame : nil
+    }
+
     private func performMove(dragged: WindowInfo, target: WindowInfo, draggedOriginalFrame: CGRect) {
         logger.info("Moving '\(dragged.title, privacy: .public)' to slot of '\(target.title, privacy: .public)'")
         
-        onSwapStarting?()
+        guard let targetFrame = Self.moveTargetFrame(
+            draggedSlot: slotFrame?(dragged.windowID),
+            targetSlot: slotFrame?(target.windowID),
+            targetWindowFrame: target.frame
+        ) else {
+            // Snap-back returns the dragged window to its slot
+            debugLog("WindowSwapService", "Move skipped: '\(target.title)' is not in a slot")
+            return
+        }
         
-        let targetFrame = target.frame
+        onSwapStarting?()
         
         // Use cached AXUIElement for dragged window (obtained at drag start)
         // This prevents position-based matching failures since window has moved during drag
