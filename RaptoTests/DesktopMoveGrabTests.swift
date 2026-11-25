@@ -105,4 +105,17 @@ struct DesktopMoveGrabTests {
         #expect(SpaceBarController.guessKind(forRole: "AXSplitGroup") == .other)
         #expect(SpaceBarController.guessKind(forRole: "AXStaticText") == .other)
     }
+
+    @Test("A guessed first spot stays first and near duplicates of it are dropped")
+    func probeOrderKeepsTheFirstSpotAndDropsItsNeighbours() {
+        let first = CGPoint(x: 87, y: 51)
+        let guesses = [CGPoint(x: 700, y: 51), CGPoint(x: 95, y: 51), CGPoint(x: 193, y: 51), CGPoint(x: 710, y: 51)]
+        let order = SpaceBarController.probeOrder(first: first, then: guesses)
+        #expect(order == [first, CGPoint(x: 700, y: 51), CGPoint(x: 193, y: 51)])
+    }
+
+    @Test("With nothing else to try the first spot is probed alone")
+    func probeOrderWithoutGuesses() {
+        #expect(SpaceBarController.probeOrder(first: CGPoint(x: 87, y: 51), then: []) == [CGPoint(x: 87, y: 51)])
+    }
 }
