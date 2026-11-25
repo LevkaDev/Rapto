@@ -233,6 +233,14 @@ enum SettingsSearch {
             keywords: ["switcher", "search window", "focus left", "focus right", "alt tab"]
         ),
         SettingsSearchEntry(
+            id: "shortcuts.windowFlow",
+            title: "Window Flow",
+            subtitle: "Visual 3D window strip across all desktops of the active display (⌃⌥S)",
+            section: "Window Focus",
+            tab: .shortcuts,
+            keywords: ["window flow", "visual switcher", "carousel", "strip", "cover flow", "preview", "alt tab"]
+        ),
+        SettingsSearchEntry(
             id: "shortcuts.templateShortcuts",
             title: "Template Shortcuts",
             subtitle: "Apply any built-in or custom layout in Manual mode with one shortcut",

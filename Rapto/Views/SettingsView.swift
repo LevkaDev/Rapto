@@ -832,6 +832,8 @@ struct ShortcutsSettingsView: View {
                 EditableHotkeyRow(action: .focusDown, binding: currentBinding(for: .focusDown), onBindingChanged: { updateBinding(.focusDown, $0) })
                 Divider()
                 EditableHotkeyRow(action: .openWindowSwitcher, binding: currentBinding(for: .openWindowSwitcher), onBindingChanged: { updateBinding(.openWindowSwitcher, $0) })
+                Divider()
+                EditableHotkeyRow(action: .openWindowFlow, binding: currentBinding(for: .openWindowFlow), onBindingChanged: { updateBinding(.openWindowFlow, $0) })
             }
 
             SettingsSection("Window Swap", icon: "arrow.left.arrow.right") {

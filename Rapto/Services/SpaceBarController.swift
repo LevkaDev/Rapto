@@ -31,6 +31,9 @@ private let spaceBarSkyLight: UnsafeMutableRawPointer = {
 
 private typealias SpaceBarConnectionFn = @convention(c) () -> Int32
 private typealias SpaceBarOrderedInFn = @convention(c) (Int32, UInt32, UnsafeMutablePointer<UInt8>) -> Void
+private typealias SpaceBarCopySpaceWindowsFn = @convention(c) (
+    Int32, Int32, CFArray, UInt32, UnsafeMutablePointer<UInt64>, UnsafeMutablePointer<UInt64>
+) -> CFArray?
 private typealias SpaceBarFrontProcess = @convention(c) (
     UnsafeMutablePointer<ProcessSerialNumber>, UInt32, UInt32
 ) -> OSStatus
@@ -214,7 +217,7 @@ final class SpaceBarController: ObservableObject {
     private var switchGeneration = 0
     private var didAskForSwitchPermission = false
     /// Work to do once a desktop is on screen. Returns false to try again later.
-    private var pendingAction: (spaceID: UInt64, displayID: String, token: Int, run: () -> Bool)?
+    private var pendingAction: (spaceID: UInt64, displayID: String, token: Int, settleDelay: TimeInterval, run: () -> Bool)?
     private var actionToken = 0
     /// Frames of each desktop segment in its pill, for finding the right-clicked desktop.
     private var segmentFrames: [String: [UInt64: CGRect]] = [:]
@@ -281,6 +284,14 @@ final class SpaceBarController: ObservableObject {
               let orderedSymbol = dlsym(spaceBarSkyLight, "SLSWindowIsOrderedIn") else { return nil }
         let connection = unsafeBitCast(connectionSymbol, to: SpaceBarConnectionFn.self)()
         let function = unsafeBitCast(orderedSymbol, to: SpaceBarOrderedInFn.self)
+        return (connection, function)
+    }()
+
+    private lazy var copySpaceWindows: (connection: Int32, function: SpaceBarCopySpaceWindowsFn)? = {
+        guard let connectionSymbol = dlsym(spaceBarSkyLight, "SLSMainConnectionID"),
+              let copySymbol = dlsym(spaceBarSkyLight, "SLSCopyWindowsWithOptionsAndTags") else { return nil }
+        let connection = unsafeBitCast(connectionSymbol, to: SpaceBarConnectionFn.self)()
+        let function = unsafeBitCast(copySymbol, to: SpaceBarCopySpaceWindowsFn.self)
         return (connection, function)
     }()
 
@@ -471,6 +482,17 @@ final class SpaceBarController: ObservableObject {
         let glyph = SpaceBarGlyph(pid: pid, appName: found.glyph.appName, icon: found.glyph.icon, windows: [found.window])
         move(glyph, from: found.source.id, to: destination.id, displayID: found.display.id,
              follow: movesFollowWindow, spaces: found.display.spaces)
+    }
+
+    /// Whether that desktop is the one shown on its display right now.
+    func isCurrentSpace(_ spaceID: UInt64, on displayID: String) -> Bool {
+        spaceIsCurrent(spaceID, on: displayID)
+    }
+
+    /// The window that has the keyboard, read from the app in front.
+    func frontmostWindowID() -> CGWindowID? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        return focusedWindowID(pid: pid)
     }
 
     private func focusedWindowID(pid: pid_t) -> CGWindowID? {
@@ -1473,20 +1495,36 @@ final class SpaceBarController: ObservableObject {
         return value as? String
     }
 
-    private func whenOnScreen(_ spaceID: UInt64, displayID: String, run: @escaping () -> Bool) {
+    private func whenOnScreen(_ spaceID: UInt64, displayID: String, fastSettle: Bool = false, run: @escaping () -> Bool) {
         askForSwitchPermissionIfNeeded()
         actionToken += 1
         let token = actionToken
-        pendingAction = (spaceID, displayID, token, run)
+        let settleDelay: TimeInterval = fastSettle ? 0.12 : 0.4
+        pendingAction = (spaceID, displayID, token, settleDelay, run)
         if !spaceIsCurrent(spaceID, on: displayID) {
             startSwitch(spaceID: spaceID, displayID: displayID)
         }
-        // The desktop id changes before the animation finishes. Act only on a
-        // later attempt, once that desktop has stayed current.
-        // A dropped swipe is sent again after a second, so keep trying for a while.
-        for delay in stride(from: 0.2, through: 4.8, by: 0.4) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.tryPendingAction(token: token)
+        // Under Window Flow's curtain, poll frequently so the instant DockSpaceSwipe raises the
+        // target window behind the curtain instead of 600 ms later in plain view.
+        if fastSettle {
+            for delay in stride(from: 0.025, through: 0.9, by: 0.025) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.tryPendingAction(token: token)
+                }
+            }
+            for delay in stride(from: 1.2, through: 4.8, by: 0.4) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.tryPendingAction(token: token)
+                }
+            }
+        } else {
+            // The desktop id changes before the animation finishes. Act only on a
+            // later attempt, once that desktop has stayed current.
+            // A dropped swipe is sent again after a second, so keep trying for a while.
+            for delay in stride(from: 0.2, through: 4.8, by: 0.4) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.tryPendingAction(token: token)
+                }
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
@@ -1612,16 +1650,16 @@ final class SpaceBarController: ObservableObject {
     private func tryPendingAction(token: Int) {
         noteCurrentSpaces()
         guard let pending = pendingAction, pending.token == token else { return }
-        guard spaceHasSettled(pending.spaceID, on: pending.displayID) else { return }
+        guard spaceHasSettled(pending.spaceID, on: pending.displayID, minAge: pending.settleDelay) else { return }
         guard pending.run() else { return }
         if pendingAction?.token == token {
             pendingAction = nil
         }
     }
 
-    private func spaceHasSettled(_ spaceID: UInt64, on displayID: String) -> Bool {
+    private func spaceHasSettled(_ spaceID: UInt64, on displayID: String, minAge: TimeInterval = 0.4) -> Bool {
         guard let known = spaceBecameCurrent[displayID], known.id == spaceID else { return false }
-        return Date().timeIntervalSince(known.at) >= 0.4
+        return Date().timeIntervalSince(known.at) >= minAge
     }
 
     private func noteCurrentSpaces() {
@@ -2147,15 +2185,23 @@ final class SpaceBarController: ObservableObject {
     }
 
     /// Bring one window to the front, switching to its desktop first if that desktop is hidden.
-    func focusWindow(_ window: SpaceBarWindowRef, on spaceID: UInt64, displayID: String) {
+    func focusWindow(
+        _ window: SpaceBarWindowRef,
+        on spaceID: UInt64,
+        displayID: String,
+        fastSettle: Bool = false,
+        completion: (() -> Void)? = nil
+    ) {
         if spaceIsCurrent(spaceID, on: displayID) {
             pendingAction = nil
             performFocus(pid: window.pid, windowID: window.windowID)
+            completion?()
             return
         }
-        whenOnScreen(spaceID, displayID: displayID) { [weak self] in
+        whenOnScreen(spaceID, displayID: displayID, fastSettle: fastSettle) { [weak self] in
             guard let self, self.window(window.windowID, isOn: spaceID) else { return false }
             self.performFocus(pid: window.pid, windowID: window.windowID)
+            completion?()
             return true
         }
     }
@@ -2203,6 +2249,24 @@ final class SpaceBarController: ObservableObject {
 
     private func spaceID(from info: [String: Any]) -> UInt64? {
         (info["id64"] as? NSNumber)?.uint64Value
+    }
+
+    func windowSpaceIDs(_ windowID: CGWindowID) -> [UInt64] {
+        spaceIDs(for: windowID, connection: SpaceBarMainConnectionID())
+    }
+
+    // MARK: - Workaround: Per-space window stacking order
+    // Cause: CGWindowListCopyWindowInfo sorts off-screen desktops by global background app activity
+    //        rather than the desktop's actual front-to-back window stacking.
+    // Context: Window Flow queries SLSCopyWindowsWithOptionsAndTags for the target space so its
+    //          pre-composited desktop preview matches the exact top window in every slot.
+    func orderedWindowIDs(on spaceID: UInt64) -> [CGWindowID] {
+        guard let copySpaceWindows else { return [] }
+        var setTags: UInt64 = 0
+        var clearTags: UInt64 = 0
+        let spaces = [NSNumber(value: spaceID)] as CFArray
+        let raw = copySpaceWindows.function(copySpaceWindows.connection, 0, spaces, 0x2, &setTags, &clearTags) as? [NSNumber]
+        return raw?.map(\.uint32Value) ?? []
     }
 
     private func spaceIDs(for windowID: CGWindowID, connection: SpaceBarConnectionID) -> [UInt64] {

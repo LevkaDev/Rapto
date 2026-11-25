@@ -1038,6 +1038,18 @@ extension AppState {
                 }
             }
         }
+
+        activeWindowFlowBinding = preset.bindings[.openWindowFlow]
+        if let openFlow = preset.bindings[.openWindowFlow] {
+            hotkeyManager.registerAdditionalHotkeyWithID(
+                keyCode: openFlow.keyCode,
+                modifiers: openFlow.modifiers
+            ) { [weak self] in
+                Task { @MainActor in
+                    self?.windowFlow.toggle()
+                }
+            }
+        }
         
         var desktopMoves: [(action: HotkeyAction, target: SpaceBarMoveTarget)] = [
             (.moveToPreviousDesktop, .previous),
