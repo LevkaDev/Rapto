@@ -11,6 +11,9 @@
 ### Fixes: Desktops and workspaces
 - Moving a window to another desktop from the Desktops Bar now works for Orca and other apps whose title bar has buttons right after the window buttons.
 
+### Fixes: Shortcuts and Settings
+- Apps that run Windows software through Wine, such as MetaTrader 5, can now be added to Ignored Apps and appear under Add Running App.
+
 ---
 
 ## Version 6.1

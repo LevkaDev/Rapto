@@ -495,7 +495,7 @@ class DragSnapService: ObservableObject {
     /// The window details and its AX element are looked up only when the window is dropped.
     private func beginDrag(currentFrame: CGRect) {
         guard let pressed = pressedWindow else { return }
-        if let bundleID = NSRunningApplication(processIdentifier: pressed.pid)?.bundleIdentifier,
+        if let bundleID = AppBundleLookup.bundleIdentifier(for: NSRunningApplication(processIdentifier: pressed.pid)),
            windowManager.ignoredBundleIdentifiers.contains(bundleID) {
             isNotWindowDrag = true
             return

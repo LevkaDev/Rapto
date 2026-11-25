@@ -39,7 +39,7 @@ struct AppsSettingsView: View {
             .padding(.bottom, 24)
 
             SettingsSection("Ignored Apps", icon: "xmark.app") {
-                Text("Rapto never tiles, snaps, or manages windows of these applications in any mode.")
+                Text("Rapto never tiles, snaps, or manages windows of these applications in any mode. Windows software run through Wine counts as the app that launches it, so programs started from one launcher are ignored together.")
                     .font(.callout)
                     .foregroundStyle(.neuTextSecondary)
                     .padding(.bottom, 8)
@@ -65,13 +65,11 @@ struct AppsSettingsView: View {
 
                 HStack {
                     Menu {
-                        ForEach(runningAppsNotIgnored, id: \.bundleIdentifier) { app in
+                        ForEach(runningAppsNotIgnored, id: \.bundleID) { app in
                             Button {
-                                if let bundleID = app.bundleIdentifier {
-                                    appState.addIgnoredApp(bundleID)
-                                }
+                                appState.addIgnoredApp(app.bundleID)
                             } label: {
-                                Label(app.localizedName ?? "Unknown", systemImage: "app")
+                                Label(app.name, systemImage: "app")
                             }
                         }
 
@@ -116,16 +114,20 @@ struct AppsSettingsView: View {
         }
     }
 
-    private var runningAppsNotIgnored: [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications
-            .filter { app in
-                guard let bundleID = app.bundleIdentifier else { return false }
-                guard app.activationPolicy == .regular else { return false }
-                guard !appState.ignoredApps.contains(bundleID) else { return false }
-                guard bundleID != Bundle.main.bundleIdentifier else { return false }
-                return true
+    /// Running apps that can be added, one entry per app: an app run through Wine has several
+    /// helper processes, which all count as that app.
+    private var runningAppsNotIgnored: [(bundleID: String, name: String)] {
+        var seen: Set<String> = []
+        return NSWorkspace.shared.runningApplications
+            .compactMap { app -> (bundleID: String, name: String)? in
+                guard app.activationPolicy == .regular,
+                      let bundleID = AppBundleLookup.bundleIdentifier(for: app),
+                      !appState.ignoredApps.contains(bundleID),
+                      bundleID != Bundle.main.bundleIdentifier,
+                      seen.insert(bundleID).inserted else { return nil }
+                return (bundleID, AppBundleLookup.displayName(for: app))
             }
-            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+            .sorted { $0.name < $1.name }
     }
 }
 
