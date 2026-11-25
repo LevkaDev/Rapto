@@ -173,15 +173,19 @@ enum GuideGestureCopy {
 
     static func switcherAndResizeCard(for snapshot: Snapshot) -> GuideGestureCardModel {
         let switcher = shortcut(.openWindowSwitcher, in: snapshot.bindings)
+        let flow = shortcut(.openWindowFlow, in: snapshot.bindings)
         let restore = shortcut(.restoreLayout, in: snapshot.bindings)
         let shrinkW = shortcut(.resizeShrinkWidth, in: snapshot.bindings)
         let growW = shortcut(.resizeGrowWidth, in: snapshot.bindings)
 
         var badges: [String] = []
+        if let flow { badges.append(flow) }
         if let switcher { badges.append(switcher) }
         if let restore { badges.append(restore) }
 
-        let switcherClause = switcher.map { "Press \($0) and type initials (e.g. “tg” for Telegram) or press Return for the last window." }
+        let flowClause = flow.map { "Press \($0) for Window Flow to scroll through live windows across desktops." }
+            ?? "Bind Window Flow in Shortcuts to scroll through live windows across desktops."
+        let switcherClause = switcher.map { "Press \($0) for Window Switcher to jump by typing initials." }
             ?? "Bind Window Switcher in Shortcuts to jump to any window by typing initials."
         let resizeClause: String
         if let shrinkW, let growW {
@@ -194,9 +198,9 @@ enum GuideGestureCopy {
         return GuideGestureCardModel(
             id: "switcherResize",
             icon: "magnifyingglass.circle",
-            title: "Window Switcher & Neighbor Resize",
+            title: "Window Flow, Switcher & Neighbor Resize",
             badges: badges,
-            detail: "\(switcherClause) \(resizeClause)\(restoreClause)",
+            detail: "\(flowClause) \(switcherClause) \(resizeClause)\(restoreClause)",
             targetTab: .shortcuts,
             targetLabel: "Shortcuts"
         )

@@ -19,9 +19,9 @@ class AppState: ObservableObject {
     
     @Published var isOverlayVisible: Bool = false {
         didSet {
-            // Suppress mouse events in services when overlay is visible
-            // This prevents accidental window dragging while drawing custom zones
-            let suppress = isOverlayVisible
+            // Suppress mouse events in services when overlay or Window Flow is visible
+            // This prevents accidental window dragging while drawing custom zones or browsing
+            let suppress = isOverlayVisible || isWindowFlowOpen
             dragSnapService?.suppressMouseEvents = suppress
             windowSwapService?.suppressMouseEvents = suppress
             windowHighlightService?.suppressMouseEvents = suppress
@@ -30,6 +30,9 @@ class AppState: ObservableObject {
             }
         }
     }
+
+    private var isWindowFlowOpen: Bool = false
+    var activeWindowFlowBinding: HotkeyBinding?
     
     @Published var selectedTemplate: GridTemplate?
     
@@ -677,7 +680,32 @@ class AppState: ObservableObject {
 
     /// Menu-bar pill listing macOS desktops and the apps open on each one
     let spaceBarController: SpaceBarController
+    /// Tracks window focus frequency/recency so Window Flow puts frequent windows first
+    let windowUsageTracker: WindowUsageTracker
     lazy var windowSwitcher = WindowSwitcherController(spaceBar: spaceBarController)
+    lazy var windowFlow: WindowFlowController = {
+        let flow = WindowFlowController(
+            spaceBar: spaceBarController,
+            screenManager: screenManager,
+            usageTracker: windowUsageTracker
+        )
+        flow.toggleBinding = { [weak self] in
+            self?.activeWindowFlowBinding
+        }
+        flow.onVisibilityChanged = { [weak self] visible in
+            guard let self else { return }
+            self.isWindowFlowOpen = visible
+            self.windowUsageTracker.isSuppressed = visible
+            let suppress = visible || self.isOverlayVisible
+            self.dragSnapService?.suppressMouseEvents = suppress
+            self.windowSwapService?.suppressMouseEvents = suppress
+            self.windowHighlightService?.suppressMouseEvents = suppress
+        }
+        flow.onDidFocusWindow = { [weak self] in
+            self?.groupIndicatorManager?.updateIndicators()
+        }
+        return flow
+    }()
     private(set) lazy var oneTimeHints = OneTimeHints(appState: self)
     var hasFinishedLaunchSetup = false
 
@@ -811,6 +839,7 @@ class AppState: ObservableObject {
     init() {
         self.accessibilityService = AccessibilityService()
         self.spaceBarController = SpaceBarController()
+        self.windowUsageTracker = WindowUsageTracker(spaceBar: spaceBarController)
         self.windowManager = WindowManager()
         self.screenManager = ScreenManager()
         self.screenManager.windowGap = Self.defaultGap
@@ -989,6 +1018,7 @@ class AppState: ObservableObject {
             self?.spaceBarDidMoveWindow(windowID, toSpaceKey: spaceKey, displayID: displayID)
         }
         spaceBarController.start(enabled: showsSpaceBar)
+        windowUsageTracker.start()
 
         AppResponsiveness.shared.onStoppedResponding = { [weak self] pid in
             self?.appStoppedResponding(pid)

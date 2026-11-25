@@ -70,6 +70,7 @@ enum HotkeyAction: String, CaseIterable, Codable {
     case restoreLayout = "restore_layout"
     
     case openWindowSwitcher = "open_window_switcher"
+    case openWindowFlow = "open_window_flow"
     
     case moveToPreviousDesktop = "move_to_previous_desktop"
     case moveToNextDesktop = "move_to_next_desktop"
@@ -139,6 +140,7 @@ enum HotkeyAction: String, CaseIterable, Codable {
         case .moveToScreenRight: return "Move to Right Screen"
         case .restoreLayout: return "Restore Layout"
         case .openWindowSwitcher: return "Window Switcher"
+        case .openWindowFlow: return "Window Flow"
         case .moveToPreviousDesktop: return "Move to Previous Desktop"
         case .moveToNextDesktop: return "Move to Next Desktop"
         case .moveToDesktop1: return "Move to Desktop 1"
@@ -323,8 +325,9 @@ struct HotkeyPreset: Codable {
         // Restore layout: Ctrl+Option+R
         bindings[.restoreLayout] = HotkeyBinding(keyCode: 0x0F, modifiers: ctrlOpt)
         
-        // Window switcher: Ctrl+Option+W
+        // Window switcher: Ctrl+Option+W, Window Flow: Ctrl+Option+S
         bindings[.openWindowSwitcher] = HotkeyBinding(keyCode: 0x0D, modifiers: ctrlOpt)
+        bindings[.openWindowFlow] = HotkeyBinding(keyCode: 0x01, modifiers: ctrlOpt)
         
         // Move to desktop: Ctrl+Option+Shift + ←/→ and 1-9
         let ctrlOptShift = UInt32(controlKey | optionKey | shiftKey)
@@ -399,8 +402,9 @@ struct HotkeyPreset: Codable {
         // Restore layout: Alt+R
         bindings[.restoreLayout] = HotkeyBinding(keyCode: 0x0F, modifiers: alt)  // Alt+R
         
-        // Window switcher: Alt+W
+        // Window switcher: Alt+W, Window Flow: Alt+S
         bindings[.openWindowSwitcher] = HotkeyBinding(keyCode: 0x0D, modifiers: alt)
+        bindings[.openWindowFlow] = HotkeyBinding(keyCode: 0x01, modifiers: alt)
         
         // Move to desktop: Alt+Ctrl+Shift + ←/→, Alt+Ctrl + 1-9
         bindings[.moveToPreviousDesktop] = HotkeyBinding(keyCode: 0x7B, modifiers: altCtrlShift)
@@ -527,11 +531,37 @@ class HotkeyPresetStorage {
     
     /// The base preset the user customized, with their overrides; a cleared shortcut is left out
     func loadCustomPreset() -> HotkeyPreset {
-        var bindings = HotkeyPreset.preset(for: loadBasePresetType()).bindings
-        for (action, binding) in loadCustomBindings() ?? [:] {
+        let bindings = Self.customBindings(
+            base: HotkeyPreset.preset(for: loadBasePresetType()).bindings,
+            custom: loadCustomBindings() ?? [:]
+        )
+        return HotkeyPreset(type: .custom, bindings: bindings)
+    }
+
+    /// Actions added to the presets after users had saved their own shortcuts. Their default
+    /// shortcut gives way to a shortcut the user has put on something else.
+    static let laterAddedActions: Set<HotkeyAction> = [.openWindowFlow]
+
+    /// The base preset with the user's changes on top. A later-added action the user has not set
+    /// stays without a shortcut when its default one is already taken by the user's own choice;
+    /// otherwise an update would put two actions on one shortcut.
+    static func customBindings(
+        base: [HotkeyAction: HotkeyBinding],
+        custom: [HotkeyAction: HotkeyBinding]
+    ) -> [HotkeyAction: HotkeyBinding] {
+        var bindings = base
+        for (action, binding) in custom {
             bindings[action] = binding.isCleared ? nil : binding
         }
-        return HotkeyPreset(type: .custom, bindings: bindings)
+        for action in laterAddedActions where custom[action] == nil {
+            guard let fallback = base[action] else { continue }
+            let taken = custom.contains { other, binding in
+                other != action && !binding.isCleared
+                    && binding.keyCode == fallback.keyCode && binding.modifiers == fallback.modifiers
+            }
+            if taken { bindings[action] = nil }
+        }
+        return bindings
     }
     
 }

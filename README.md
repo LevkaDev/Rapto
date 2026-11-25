@@ -43,8 +43,8 @@ read the code, build it themselves or contribute.
   them all back or close them all at once.
 - **Keyboard shortcuts** for layouts, moving and swapping windows, focusing a slot and
   switching desktops, with a Vim-style preset.
-- **Window switcher**, resizing neighbours together, swapping by drag, floating windows and
-  a focus mode.
+- **Window Flow & Window Switcher**, resizing neighbours together, swapping by drag, floating
+  windows and a focus mode.
 - **Multiple displays** with independent settings.
 - **AppleScript commands**, used by the Rapto extension for Raycast.
 
@@ -53,8 +53,9 @@ read the code, build it themselves or contribute.
 - macOS 26 or later, Apple Silicon or Intel.
 - **Accessibility** permission, to move and resize windows.
 - **Screen Recording** permission, optional: it lets Rapto show live previews of your windows
-  in the layout overlay and match the highlight border to each window's corners. The images
-  stay in memory and are never saved or uploaded.
+  in Window Flow and the layout overlay, and match the highlight border to each window's corners.
+  Without it, Window Flow still works as an app-icon overlay. The images stay in memory and are
+  never saved or uploaded.
 
 ## Privacy
 
@@ -77,7 +78,7 @@ use them, mainly `SpaceBarController.swift`, `SpaceManager.swift`, `DockSpaceSwi
 | `CGSGetSymbolicHotKeyValue`, `CGSIsSymbolicHotKeyEnabled`, `CGSSetSymbolicHotKeyEnabled` | Reading and toggling the system desktop shortcuts |
 | `_AXUIElementGetWindow`, `_AXUIElementCreateWithRemoteToken` | Matching an Accessibility window to its window number, and reaching windows on other desktops to read their titles |
 | `GetProcessForPID`, `_SLPSSetFrontProcessWithOptions` | Bringing one window of an app to the front without its other windows |
-| `SLSMainConnectionID`, `SLSWindowIsOrderedIn` | Checking whether a window is shown on the current desktop |
+| `SLSMainConnectionID`, `SLSWindowIsOrderedIn`, `SLSCopyWindowsWithOptionsAndTags` | Checking whether a window is shown on the current desktop and reading true per-desktop window stacking order for Window Flow |
 | The `CGSSessionScreenIsLocked` key of the session dictionary | Screen lock state |
 
 These functions can change in any macOS release. Places where Rapto works around system

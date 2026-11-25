@@ -10,6 +10,21 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Added
+- **Window Flow** (`WindowFlowController`, `WindowFlowBackdropArt`, `WindowUsageTracker`): visual
+  3D window strip across all desktops of the active display, bound to `⌃⌥S` in the Rapto preset
+  (`⌥S` in Vim Style) and customizable in `Settings → Shortcuts → Window Focus`
+  (`HotkeyAction.openWindowFlow`). Includes 4 persistent backdrop themes (`Sky · Azure`,
+  `Sky · Dusk`, `Sky · Night`, `Glass` cycled via `B`), frecency window ordering (current window
+  at slot 0, previous genuine window at slot 1, 2.5-hour half-life decay with noise filtering and
+  capped active dwell at slots 2+), bounded thumbnail cache, seamless cross-desktop handoff using
+  per-space `SLSCopyWindowsWithOptionsAndTags` z-order, and an app-icon overlay fallback with a
+  Settings shortcut banner when Screen Recording permission is off. Cached previews are kept at
+  side-card size. Keys are read through a session event tap while browsing; under Secure Input the
+  panel takes the keyboard as a key window instead. A user whose own shortcut already uses the
+  Window Flow default keeps it, and Window Flow stays unbound
+  (`HotkeyPresetStorage.customBindings`).
+
 ### Fixed
 - Resize shortcuts (`Shrink / Grow Width / Height`) changed only the size of the focused slot's
   windows, anchored at the top left: neighbours did not follow, a slot could grow over its
