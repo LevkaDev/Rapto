@@ -78,19 +78,29 @@ nonisolated enum DesktopMoveGrabAnchor: Equatable, Sendable {
 /// Session memory of proven title-bar grab anchors keyed by app identifier.
 nonisolated struct DesktopMoveGrabMemory: Sendable {
     private var anchors: [String: DesktopMoveGrabAnchor] = [:]
+    /// Frame-relative backup recorded alongside button-relative anchors so a cached spot still
+    /// resolves when an App-Napped app hasn't reported traffic-light buttons via Accessibility yet.
+    private var frameFallbacks: [String: DesktopMoveGrabAnchor] = [:]
 
     mutating func remember(point: CGPoint, in frame: CGRect, buttonFrame: CGRect?, for appKey: String) {
         guard !appKey.isEmpty else { return }
         anchors[appKey] = DesktopMoveGrabAnchor.record(point: point, in: frame, buttonFrame: buttonFrame)
+        frameFallbacks[appKey] = DesktopMoveGrabAnchor.record(point: point, in: frame, buttonFrame: nil)
     }
 
     func resolve(for appKey: String, in frame: CGRect, buttonFrame: CGRect?) -> CGPoint? {
-        guard let anchor = anchors[appKey] else { return nil }
-        return anchor.resolve(in: frame, buttonFrame: buttonFrame)
+        if let point = anchors[appKey]?.resolve(in: frame, buttonFrame: buttonFrame) {
+            return point
+        }
+        if buttonFrame == nil {
+            return frameFallbacks[appKey]?.resolve(in: frame, buttonFrame: nil)
+        }
+        return nil
     }
 
     mutating func invalidate(for appKey: String) {
         anchors.removeValue(forKey: appKey)
+        frameFallbacks.removeValue(forKey: appKey)
     }
 
     func anchor(for appKey: String) -> DesktopMoveGrabAnchor? {
@@ -395,6 +405,63 @@ nonisolated enum DesktopMoveGrabPlanner {
         guard layer >= 0 && layer < 20 else { return false }
         guard !systemOverlayOwners.contains(owner) else { return false }
         return true
+    }
+
+    /// Safe title-bar drag candidates computed purely from Core Graphics geometry when an app
+    /// waking from App Nap has not answered Accessibility yet. Keeps clear of the standard macOS
+    /// traffic-light area (`minX ..< minX + 82`) on the primary row and puts any cached point first.
+    static func cgFallbackSpots(
+        in frame: CGRect,
+        cachedPoint: CGPoint? = nil,
+        excluding: [CGPoint] = [],
+        limit: Int = 8
+    ) -> [CGPoint] {
+        guard frame.width >= 40, frame.height >= 24, limit > 0 else { return [] }
+
+        var raw: [CGPoint] = []
+        if let cachedPoint, frame.contains(cachedPoint) {
+            raw.append(cachedPoint)
+        }
+
+        let rows = titleBarRows(for: frame, buttonFrame: nil)
+        // Standard traffic lights occupy roughly minX + 12 ... minX + 76; keep clear when wide enough.
+        let safeButtonsMaxX: CGFloat? = frame.width >= 200 ? (frame.minX + 82) : nil
+
+        for (rowIndex, rowY) in rows.enumerated() {
+            if rowIndex == 0 {
+                let primaryMinX = (safeButtonsMaxX.map { $0 + 4 }) ?? (frame.minX + 12)
+                let seededXs: [CGFloat] = [
+                    frame.midX,
+                    frame.minX + 110,
+                    frame.minX + 190,
+                    frame.maxX - 110,
+                    frame.maxX - 190
+                ]
+                for x in seededXs where x >= primaryMinX && x <= frame.maxX - 4 {
+                    raw.append(CGPoint(x: x, y: rowY))
+                }
+                for x in adaptiveXs(in: frame, buttonsMaxX: safeButtonsMaxX) {
+                    raw.append(CGPoint(x: x, y: rowY))
+                }
+            } else {
+                for x in adaptiveXs(in: frame, buttonsMaxX: safeButtonsMaxX).prefix(4) {
+                    raw.append(CGPoint(x: x, y: rowY))
+                }
+            }
+        }
+
+        var result: [CGPoint] = []
+        for point in raw where frame.contains(point) {
+            if excluding.contains(where: { abs($0.x - point.x) < 24 && abs($0.y - point.y) < 24 }) {
+                continue
+            }
+            if result.contains(where: { abs($0.x - point.x) < 24 && abs($0.y - point.y) < 24 }) {
+                continue
+            }
+            result.append(point)
+            if result.count >= limit { break }
+        }
+        return result
     }
 
     /// Safe release point outside `windowFrame` that stays clear of display borders when `screenBounds` is known.

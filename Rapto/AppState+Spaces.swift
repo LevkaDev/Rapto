@@ -222,12 +222,24 @@ extension AppState {
     /// The slot for a window that has a remembered one. A window that left it in this session
     /// goes back there whatever is in it now. A slot remembered from an earlier run is taken
     /// only while it is free: nobody recalls an old place, and joining other windows there
-    /// while a slot is empty looks random. With no empty slot the remembered one is as good as any.
-    nonisolated static func slotForRememberedWindow(remembered: Int, isFromThisSession: Bool, otherWindowCounts: [Int]) -> Int {
+    /// while a slot is empty looks random. When every slot is occupied, keep `current` (the
+    /// slot whose frame the window already sits over) instead of yanking it into another occupied slot.
+    nonisolated static func slotForRememberedWindow(
+        remembered: Int,
+        isFromThisSession: Bool,
+        otherWindowCounts: [Int],
+        current: Int? = nil
+    ) -> Int {
         guard !isFromThisSession, otherWindowCounts.indices.contains(remembered), otherWindowCounts[remembered] > 0 else {
             return remembered
         }
-        return otherWindowCounts.firstIndex(of: 0) ?? remembered
+        if let empty = otherWindowCounts.firstIndex(of: 0) {
+            return empty
+        }
+        if let current, otherWindowCounts.indices.contains(current) {
+            return current
+        }
+        return remembered
     }
 
     /// A window moved onto a Manual desktop gets a slot there as soon as that desktop is on screen.
@@ -277,7 +289,8 @@ extension AppState {
         let remembered = memory.map { memory in
             AppState.slotForRememberedWindow(
                 remembered: memory.slot, isFromThisSession: memory.isFromThisSession,
-                otherWindowCounts: state.slots.map { slot in slot.windows.filter { $0.windowID != window.windowID }.count }
+                otherWindowCounts: state.slots.map { slot in slot.windows.filter { $0.windowID != window.windowID }.count },
+                current: current
             )
         }
         logger.info("Desktops bar: placing '\(window.ownerName, privacy: .public)', current slot \(current.map { $0 + 1 } ?? 0), remembered slot \(memory.map { $0.slot + 1 } ?? 0) \(memory?.isFromThisSession == true ? "from this session" : "stored", privacy: .public), goes to \(remembered.map { $0 + 1 } ?? 0)")

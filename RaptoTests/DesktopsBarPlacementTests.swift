@@ -82,6 +82,37 @@ struct DesktopsBarPlacementTests {
         #expect(AppState.slotForRememberedWindow(remembered: 2, isFromThisSession: false, otherWindowCounts: [1, 2, 1]) == 2)
     }
 
+    @Test("Stale stored slot does not yank a moved window out of a matching slot when all slots are occupied")
+    func storedSlotYieldsToCurrentSlotWhenAllSlotsAreOccupied() {
+        // Hark arrived in big slot 2 matching its size; old UserDefaults memory points to occupied small slot 0.
+        #expect(
+            AppState.slotForRememberedWindow(
+                remembered: 0,
+                isFromThisSession: false,
+                otherWindowCounts: [1, 1, 1],
+                current: 2
+            ) == 2
+        )
+        // A same-session return still wins over current even when all slots are occupied.
+        #expect(
+            AppState.slotForRememberedWindow(
+                remembered: 0,
+                isFromThisSession: true,
+                otherWindowCounts: [1, 1, 1],
+                current: 2
+            ) == 0
+        )
+        // If an empty slot exists, the empty slot still wins over both stale memory and occupied current.
+        #expect(
+            AppState.slotForRememberedWindow(
+                remembered: 0,
+                isFromThisSession: false,
+                otherWindowCounts: [1, 0, 1],
+                current: 2
+            ) == 1
+        )
+    }
+
     @Test func storedSlotOutOfRangeIsReturnedUnchanged() {
         #expect(AppState.slotForRememberedWindow(remembered: 7, isFromThisSession: false, otherWindowCounts: [1, 0, 1]) == 7)
     }

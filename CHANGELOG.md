@@ -11,6 +11,19 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- Moving a window to a Manual desktop where every slot is occupied no longer lets a stale slot
+  memory entry from an earlier session yank the window out of the slot whose size and position it
+  already matches (`AppState.slotForRememberedWindow` now preserves `current` when the old stored
+  slot is occupied and no empty slot is available; same-session returns still take their prior slot).
+- Moving an App-Napped background window (such as WhatsApp) from another desktop via the Desktops
+  Bar could abort with a beep after hitting the 1 s Accessibility timeout before the app woke up.
+  `SpaceBarController` now pings the target process off the main thread during the desktop switch,
+  marks the move active before waking/raising the window via `NSRunningApplication.activate()` +
+  WindowServer, uses a short `0.15 s` per-element Accessibility timeout (avoiding false
+  `AppResponsiveness` bans), and falls back immediately to Core Graphics frame bounds and
+  frame-relative grab memory if Accessibility is still waking up. `WindowHighlightService` also
+  stands down while `SpaceBarController.isDrivingMouse` is active so `WindowClassifier` never
+  stalls the main thread for 1 s on a waking app mid-move.
 - Restoring a Manual layout (such as switching back from Auto-tiling to Manual) could stack an
   unassigned window into an occupied slot by frame overlap while leaving another slot empty.
   `AppState.processUnassignedWindowsAfterRestore` now excludes all windows already restored into

@@ -110,6 +110,14 @@ final class AppResponsiveness: ObservableObject {
         onStoppedResponding?(pid)
     }
 
+    /// Clears a transient unresponsive mark immediately when another probe hears back from `pid`.
+    func noteResponded(_ pid: pid_t) {
+        guard NotRespondingApps.shared.contains(pid) else { return }
+        DispatchQueue.main.async {
+            self.markResponding(pid)
+        }
+    }
+
     private func markResponding(_ pid: pid_t) {
         guard NotRespondingApps.shared.remove(pid) else { return }
         notRespondingPIDs.remove(pid)

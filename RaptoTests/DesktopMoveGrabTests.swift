@@ -419,4 +419,49 @@ struct DesktopMoveGrabTests {
         #expect(DesktopMoveGrabPlanner.isBlockingWindow(layer: 0, owner: "Spotify", alpha: 1, pid: 200, ownPID: own))
         #expect(DesktopMoveGrabPlanner.isBlockingWindow(layer: 3, owner: "Phi", alpha: 1, pid: 201, ownPID: own))
     }
+
+    // MARK: - App Nap wake & Core Graphics fallback
+
+    @Test("Cached button-relative anchor falls back to frame-relative coordinates when AX buttons are unavailable")
+    func cachedAnchorResolvesWithoutAXButtonsDuringAppNapWake() {
+        var memory = DesktopMoveGrabMemory()
+        let frame = CGRect(x: 8, y: 34, width: 1342, height: 753)
+        let buttons = CGRect(x: 64, y: 43, width: 14, height: 14) // maxX = 78, midY = 50
+        memory.remember(point: CGPoint(x: 88, y: 50), in: frame, buttonFrame: buttons, for: "net.whatsapp.WhatsApp")
+
+        #expect(memory.anchor(for: "net.whatsapp.WhatsApp") == .fromButtons(dx: 10, dy: 0))
+        // Even with buttonFrame == nil (App Nap CG fallback), the cached grab point still resolves!
+        #expect(memory.resolve(for: "net.whatsapp.WhatsApp", in: frame, buttonFrame: nil) == CGPoint(x: 88, y: 50))
+
+        memory.invalidate(for: "net.whatsapp.WhatsApp")
+        #expect(memory.resolve(for: "net.whatsapp.WhatsApp", in: frame, buttonFrame: nil) == nil)
+    }
+
+    @Test("Core Graphics fallback spots keep clear of macOS traffic lights and honor cached spot first")
+    func cgFallbackSpotsStayClearOfTrafficLightsAndPrioritizeCache() {
+        let frame = CGRect(x: 8, y: 34, width: 1342, height: 753)
+        let cached = CGPoint(x: 88, y: 50)
+        let spots = DesktopMoveGrabPlanner.cgFallbackSpots(in: frame, cachedPoint: cached, limit: 6)
+
+        #expect(!spots.isEmpty)
+        #expect(spots[0] == cached)
+        #expect(spots.count <= 6)
+        // All spots stay inside the title bar and clear of the traffic-light zone (8...90)
+        for spot in spots {
+            #expect(frame.contains(spot))
+            #expect(spot.x >= frame.minX + 80)
+            #expect(spot.y <= frame.minY + DesktopMoveGrabPlanner.maxTitleBarHeight)
+        }
+        // Excluded spots are omitted
+        let filtered = DesktopMoveGrabPlanner.cgFallbackSpots(in: frame, excluding: [spots[1]], limit: 6)
+        #expect(!filtered.contains(where: { abs($0.x - spots[1].x) < 24 && abs($0.y - spots[1].y) < 24 }))
+    }
+
+    @Test("Core Graphics fallback still produces draggable spots on narrow windows")
+    func cgFallbackSpotsWorkOnNarrowWindows() {
+        let narrow = CGRect(x: 200, y: 34, width: 160, height: 400)
+        let spots = DesktopMoveGrabPlanner.cgFallbackSpots(in: narrow, limit: 4)
+        #expect(!spots.isEmpty)
+        #expect(spots.allSatisfy { narrow.contains($0) })
+    }
 }
