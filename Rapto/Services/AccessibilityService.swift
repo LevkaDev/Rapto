@@ -110,6 +110,7 @@ class AccessibilityService {
     /// Check if a window is accessible via AX API (i.e., on the current Space)
     /// Windows on other Spaces return empty window list from AXUIElementCopyAttributeValue
     func isWindowAccessible(_ window: WindowInfo) -> Bool {
+        if TourSandboxWindows.contains(window.windowID) { return true }
         guard AppResponsiveness.isResponding(window.ownerPID) else { return false }
         let app = AXUIElementCreateApplication(window.ownerPID)
         
@@ -202,6 +203,8 @@ class AccessibilityService {
     }
     
     func getAXWindow(for window: WindowInfo, overrideFrame: CGRect? = nil, excludeElements: Set<ObjectIdentifier>? = nil) -> AXUIElement? {
+        // Never issue synchronous AX IPC to our own process (would deadlock the main thread)
+        if TourSandboxWindows.contains(window.windowID) { return nil }
         debugLog("AccessibilityService", "🔎 getAXWindow: windowID=\(window.windowID), title='\(window.title)', CACHE_SIZE=\(axElementCache.count)")
         
         guard AppResponsiveness.isResponding(window.ownerPID) else { return nil }
@@ -489,6 +492,12 @@ class AccessibilityService {
     /// Set both position and size of a window atomically (single AXWindow lookup)
     /// This avoids race conditions where position change invalidates the lookup for size.
     func setWindowPositionAndSize(_ window: WindowInfo, position: CGPoint, size: CGSize) -> (position: Bool, size: Bool) {
+        if TourSandboxWindows.contains(window.windowID) {
+            let ok = MainActor.assumeIsolated {
+                TourSandboxWindows.shared.setCGFrame(CGRect(origin: position, size: size), for: window.windowID)
+            }
+            return (ok, ok)
+        }
         debugLog("AccessibilityService", "setWindowPositionAndSize '\(window.title)' to (\(position.x), \(position.y)), size=\(size.width)x\(size.height)")
         
         guard let axWindow = getAXWindow(for: window) else {
@@ -697,6 +706,11 @@ class AccessibilityService {
     /// Moves and resizes a window, looking its AXWindow up once for both
     @discardableResult
     func setWindowFrame(_ window: WindowInfo, frame: CGRect) -> Bool {
+        if TourSandboxWindows.contains(window.windowID) {
+            return MainActor.assumeIsolated {
+                TourSandboxWindows.shared.setCGFrame(frame, for: window.windowID)
+            }
+        }
         // MARK: - Workaround: Single AXWindow lookup for position+size
         // Cause: After setWindowPosition the window moves, but window.frame stays stale.
         //        Looking the AXWindow up again (for setWindowSize) then fails to match by position.
@@ -712,6 +726,11 @@ class AccessibilityService {
     
     /// - Returns: The current frame in CG coordinates, or nil if failed
     func getWindowFrame(_ window: WindowInfo) -> CGRect? {
+        if TourSandboxWindows.contains(window.windowID) {
+            return MainActor.assumeIsolated {
+                TourSandboxWindows.shared.cgFrame(for: window.windowID)
+            }
+        }
         guard let axWindow = getAXWindow(for: window) else {
             return nil
         }
@@ -910,6 +929,11 @@ class AccessibilityService {
     /// Raise a window to the front and activate its application
     @discardableResult
     func raiseWindow(_ window: WindowInfo) -> Bool {
+        if TourSandboxWindows.contains(window.windowID) {
+            return MainActor.assumeIsolated {
+                TourSandboxWindows.shared.raise(windowID: window.windowID)
+            }
+        }
         debugLog("AccessibilityService", "raiseWindow called for '\(window.title)' (windowID: \(window.windowID), PID: \(window.ownerPID))")
         
         guard let axWindow = getAXWindow(for: window) else {
@@ -1046,6 +1070,11 @@ class AccessibilityService {
     /// This method finds the target window's position in z-order and uses the correct skipCount
     @discardableResult
     func raiseWindowByZOrder(_ window: WindowInfo) -> Bool {
+        if TourSandboxWindows.contains(window.windowID) {
+            return MainActor.assumeIsolated {
+                TourSandboxWindows.shared.raise(windowID: window.windowID)
+            }
+        }
         debugLog("AccessibilityService", "raiseWindowByZOrder called for windowID: \(window.windowID), PID: \(window.ownerPID)")
         
         guard AppResponsiveness.isResponding(window.ownerPID) else { return false }

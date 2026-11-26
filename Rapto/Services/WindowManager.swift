@@ -89,7 +89,7 @@ class WindowManager {
             
             guard layer == 0 else { return nil }
             
-            guard ownerPID != ownPID else { return nil }
+            guard ownerPID != ownPID || TourSandboxWindows.contains(windowID) else { return nil }
             
             let title = dict[kCGWindowName as String] as? String ?? ""
             let ownerName = dict[kCGWindowOwnerName as String] as? String ?? ""

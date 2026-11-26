@@ -213,7 +213,7 @@ class WindowResizeService: ObservableObject {
             return
         }
         
-        if frontApp.bundleIdentifier == Bundle.main.bundleIdentifier { return }
+        if frontApp.bundleIdentifier == Bundle.main.bundleIdentifier && !TourSandboxWindows.hasActiveWindows { return }
         
         let windows = windowManager.enumerateWindows()
         let frontWindows = windows.filter { $0.ownerPID == frontApp.processIdentifier }
@@ -582,6 +582,10 @@ class WindowResizeService: ObservableObject {
     /// `from` is the frame the window is taken to have now; without it both position and size are set
     /// The move starts with the next `mover.flush()`. `first` puts it before the app's other windows.
     private func move(_ window: WindowInfo, to frame: CGRect, from previous: CGRect? = nil, first: Bool = false) {
+        if TourSandboxWindows.contains(window.windowID) {
+            _ = TourSandboxWindows.shared.setCGFrame(frame, for: window.windowID)
+            return
+        }
         guard let element = axElements[window.windowID] ?? accessibilityService.getAXWindow(for: window) else { return }
         axElements[window.windowID] = element
         mover.move(element, windowID: window.windowID, app: window.ownerPID, to: frame, from: previous, first: first)
@@ -694,6 +698,7 @@ class WindowResizeService: ObservableObject {
         layoutManager.markAsManuallyModified(forScreenID: screenID)
 
         onResizeCompleted?(targets, screenID)
+        NotificationCenter.default.post(name: .raptoTourDidResizeSlot, object: nil)
 
         logger.info("Slot-based resize adjustment completed, updated \(targets.count) slots, marked as manually modified")
     }

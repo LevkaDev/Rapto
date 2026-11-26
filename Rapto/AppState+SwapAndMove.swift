@@ -146,6 +146,7 @@ extension AppState {
             self.refreshGroupIndicatorsAfterWindowMove()
             
             self.saveLayout(forScreenID: screenID)
+            NotificationCenter.default.post(name: .raptoTourDidSwapWindows, object: nil)
         }
         
         windowSwapService?.onMovePerformed = { [weak self] movedWindowID, targetWindowID in
@@ -156,6 +157,7 @@ extension AppState {
                 self.layoutManager.moveWindowAcrossScreens(dragged, toSlotOf: target.windowID)
             }) {
                 self.finishDropAcrossScreens(changed)
+                NotificationCenter.default.post(name: .raptoTourDidGroupWindows, object: nil)
                 return
             }
             
@@ -170,6 +172,9 @@ extension AppState {
             self.refreshGroupIndicatorsAfterWindowMove()
             
             self.saveLayout(forScreenID: screenID)
+            if self.layoutManager.state(forScreenID: screenID).slots.contains(where: \.hasGroup) {
+                NotificationCenter.default.post(name: .raptoTourDidGroupWindows, object: nil)
+            }
         }
         
         windowSwapService?.isWindowLocked = { [weak self] windowID in

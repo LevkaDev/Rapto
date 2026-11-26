@@ -18,6 +18,8 @@ extension Notification.Name {
 extension AppState {
     // MARK: - Onboarding
 
+    static let firstOnboardingCompletedAtKey = "firstOnboardingCompletedAt"
+
     func showOnboarding() {
         if isOnboardingVisible {
             OnboardingWindowController.shared.show(appState: self)
@@ -25,13 +27,117 @@ extension AppState {
         isOnboardingVisible = true
     }
 
-    func completeOnboarding() {
+    func completeOnboarding(launchingTour: Bool = false) {
         hasCompletedOnboarding = true
-        isOnboardingVisible = false
-        debugLog("AppState", " Onboarding completed")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.showNotchDesktopsBarHintIfNeeded()
+        if UserDefaults.standard.object(forKey: Self.firstOnboardingCompletedAtKey) == nil {
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.firstOnboardingCompletedAtKey)
         }
+        isOnboardingVisible = false
+        debugLog("AppState", " Onboarding completed (launchingTour=\(launchingTour))")
+        if !launchingTour {
+            closeTourSandboxWindows()
+            clearFirstRunArrangeUndo()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.showNotchDesktopsBarHintIfNeeded()
+            }
+        }
+    }
+
+    // MARK: - First-Run Arrange, Undo & Interactive Tour Helpers
+
+    /// True when at least one connected screen hides the Desktops Bar under its notch.
+    var hasNotchedHoverBar: Bool {
+        showsSpaceBar
+            && spaceBarPresentation != .always
+            && screenManager.allScreens().contains { spaceBarController.notchAnchor(on: $0) != nil }
+    }
+
+    /// Number of regular macOS desktops currently on the active screen.
+    var desktopCountOnActiveScreen: Int {
+        let displayID = screenManager.displayIdentifier(for: screenManager.activeScreen())
+        if let display = spaceBarController.displays.first(where: { $0.id == displayID }) {
+            return max(1, display.spaces.filter { !$0.isFullScreen }.count)
+        }
+        return 1
+    }
+
+    /// Movable, tilable windows currently visible on `screen` (including active tour sample windows).
+    func eligibleWindowsForFirstArrange(on screen: NSScreen) -> [WindowInfo] {
+        let all = windowManager.enumerateWindows()
+        let onScreen = filterWindowsOnScreen(all, screen: screen)
+        let minSize = WindowManager.minimumTilableSize
+        return onScreen.filter { window in
+            guard window.frame.width >= minSize && window.frame.height >= minSize else { return false }
+            return WindowClassifier.shared.isTilable(window)
+        }
+    }
+
+    /// Snapshots the current positions of open windows on the active screen and neatly lays them out
+    /// so new users see immediate value during first-run setup, with one-click Undo.
+    @discardableResult
+    func arrangeWindowsForFirstRun(mode: TilingMode) -> Bool {
+        let screen = screenManager.activeScreen()
+        let windows = eligibleWindowsForFirstArrange(on: screen)
+        guard !windows.isEmpty else { return false }
+
+        if preArrangeWindowFrames.isEmpty {
+            for window in windows {
+                preArrangeWindowFrames[window.windowID] = window.frame
+            }
+        }
+
+        let effectiveMode: TilingMode = (mode == .none) ? DisplayProfile.forScreen(screen).recommendedStarterMode : mode
+        switch effectiveMode {
+        case .autoTiling:
+            if self.mode(for: screen) != .autoTiling {
+                setMode(.autoTiling, for: screen)
+            } else {
+                autoTilingService?.redistributeNow(forScreenID: screenManager.identifier(for: screen))
+            }
+        case .manualAssignment:
+            let template = DisplayProfile.forScreen(screen).suggestedManualTemplate
+            applyTemplateToScreen(template: template, screen: screen)
+        case .dragSnap, .none:
+            let profile = DisplayProfile.forScreen(screen)
+            let template: GridTemplate = windows.count == 1
+                ? PredefinedTemplates.full
+                : (windows.count == 2 ? PredefinedTemplates.halvesVertical : profile.suggestedManualTemplate)
+            let visible = screenManager.visibleFrame(for: screen)
+            let zones = template.zones.sorted { $0.fillOrder < $1.fillOrder }
+            for (index, window) in windows.prefix(zones.count).enumerated() {
+                let appKitFrame = screenManager.calculateAbsoluteFrame(relativeFrame: zones[index].relativeFrame, in: visible)
+                let cgFrame = screenManager.convertToCGCoordinates(frame: appKitFrame, for: screen)
+                _ = accessibilityService.setWindowFrame(window, frame: cgFrame)
+            }
+        }
+
+        hasUndoableFirstArrange = !preArrangeWindowFrames.isEmpty
+        return true
+    }
+
+    /// Restores every window moved by `arrangeWindowsForFirstRun` to its exact pre-arrange frame.
+    func undoFirstRunArrange() {
+        guard !preArrangeWindowFrames.isEmpty else { return }
+        let saved = preArrangeWindowFrames
+        clearFirstRunArrangeUndo()
+        let current = windowManager.enumerateWindows()
+        for (windowID, frame) in saved {
+            guard let window = current.first(where: { $0.windowID == windowID }) else { continue }
+            _ = accessibilityService.setWindowFrame(window, frame: frame)
+        }
+    }
+
+    func clearFirstRunArrangeUndo() {
+        preArrangeWindowFrames.removeAll()
+        hasUndoableFirstArrange = false
+    }
+
+    func openTourSandboxWindows() {
+        TourSandboxWindows.shared.openSamplePair(on: screenManager.activeScreen())
+    }
+
+    func closeTourSandboxWindows() {
+        TourSandboxWindows.shared.closeAll()
     }
 
     func resetOnboardingForDebug() {
@@ -208,13 +314,27 @@ extension AppState {
 
     /// Points to the notch on MacBooks where the Desktops Bar is hidden until hovered (max 2 times,
     /// retired immediately once the user hovers the notch and reveals the bar).
-    func showNotchDesktopsBarHintIfNeeded() {
+    func showNotchDesktopsBarHintIfNeeded(force: Bool = false) {
         guard !isOnboardingVisible, showsSpaceBar, spaceBarPresentation != .always else { return }
         let orderedScreens = [screenManager.activeScreen()] + screenManager.allScreens().filter { $0 != screenManager.activeScreen() }
         guard let targetScreen = orderedScreens.first(where: { spaceBarController.notchAnchor(on: $0) != nil }) else {
             return
         }
         let screenID = screenManager.identifier(for: targetScreen)
+        if force {
+            oneTimeHints.showImmediate(
+                .notchDesktopsBar,
+                content: OneTimeHintCopy.notchDesktopsBar,
+                placement: { [weak self] in
+                    guard let self,
+                          let screen = self.screenManager.screen(for: screenID),
+                          let notchRect = self.spaceBarController.notchAnchor(on: screen) else { return nil }
+                    return (.belowNotch(notchRect), screen)
+                },
+                autoHideAfter: 16
+            )
+            return
+        }
         oneTimeHints.showOnce(
             .notchDesktopsBar,
             content: { OneTimeHintCopy.notchDesktopsBar },

@@ -29,12 +29,16 @@ final class OnboardingWindowController {
         let onboardingView = OnboardingView(
             onComplete: { [weak self] in
                 self?.close()
-                appState.completeOnboarding()
+                appState.completeOnboarding(launchingTour: false)
             },
-            onOpenSetupGuide: { [weak self] in
+            onStartTour: { [weak self] mode, alreadyArranged in
                 self?.close()
-                appState.completeOnboarding()
-                SettingsWindowController.shared.showSettings(appState: appState, tab: .guide)
+                appState.completeOnboarding(launchingTour: true)
+                InteractiveTourController.shared.start(
+                    appState: appState,
+                    mode: mode,
+                    alreadyArranged: alreadyArranged
+                )
             }
         )
         .environmentObject(appState)

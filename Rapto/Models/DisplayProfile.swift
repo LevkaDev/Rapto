@@ -109,6 +109,27 @@ nonisolated enum DisplayProfile: String, CaseIterable, Equatable, Sendable {
         self == .ultrawide
     }
 
+    /// Plain-English display description for onboarding's auto-tuning summary.
+    var shortLabel: String {
+        switch self {
+        case .compactLaptop: return "Compact laptop"
+        case .largeLaptop: return "Large laptop"
+        case .standardDesktop: return "Desktop display"
+        case .ultrawide: return "Wide display"
+        }
+    }
+
+    /// One-line summary explaining what Rapto tuned for this Mac's screen(s) and desktops.
+    func autoTuneSummary(screenCount: Int, desktopCount: Int) -> String {
+        let displayPart = screenCount > 1
+            ? "\(screenCount) displays · tuned per screen"
+            : "\(shortLabel) · tuned for 1–\(suggestedMaxWindows) windows"
+        if desktopCount > 1 {
+            return "\(displayPart) · \(desktopCount) desktops ready in Desktops Bar"
+        }
+        return displayPart
+    }
+
     /// Complete Auto-tiling preset tuned for this display profile.
     var autoTilingPreferences: AutoTilingPreferences {
         AutoTilingPreferences(

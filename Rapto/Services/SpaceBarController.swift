@@ -1994,6 +1994,7 @@ final class SpaceBarController: ObservableObject {
                 reveal(displayID)
                 if !wasRevealed && revealed.contains(displayID) {
                     onUserRevealedHoverBar?()
+                    NotificationCenter.default.post(name: .raptoTourDidRevealNotchBar, object: nil)
                 }
             } else if revealed.contains(displayID) {
                 scheduleHide(displayID)

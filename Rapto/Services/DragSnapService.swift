@@ -461,8 +461,9 @@ class DragSnapService: ObservableObject {
         }
         for info in list {
             guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
-                  let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   let windowID = info[kCGWindowNumber as String] as? CGWindowID,
+                  pid != ownPID || TourSandboxWindows.contains(windowID),
                   let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let frame = CGRect(dictionaryRepresentation: bounds),
                   frame.contains(point) else { continue }
@@ -709,6 +710,15 @@ class DragSnapService: ObservableObject {
             in: screenFrame
         )
         let cgFrame = screenManager.convertToCGCoordinates(frame: absoluteFrame, for: targetScreen)
+
+        if TourSandboxWindows.contains(window.windowID) {
+            _ = TourSandboxWindows.shared.setCGFrame(cgFrame, for: window.windowID)
+            NotificationCenter.default.post(name: .dragSnapDidSnap, object: nil)
+            if case .pickerZone = zone.edge {
+                NotificationCenter.default.post(name: .dragSnapDidSnapFromPicker, object: nil)
+            }
+            return
+        }
         
         guard let axWindow = accessibilityService.getAXWindow(for: window) else {
             logger.warning("Failed to snap window: no AX element")
@@ -730,6 +740,9 @@ class DragSnapService: ObservableObject {
         let sameZone = snappedWindows.values.filter { groupKey(of: $0) == groupKey(of: snapped) }.count
         debugLog("DragSnapService", "Snapped window \(window.windowID) (\(window.ownerName)) to \(zone.displayName) \(cgFrame) on \(screenID), got \(actualFrame); \(sameZone) snapped window(s) in this zone")
         NotificationCenter.default.post(name: .dragSnapDidSnap, object: nil)
+        if case .pickerZone = zone.edge {
+            NotificationCenter.default.post(name: .dragSnapDidSnapFromPicker, object: nil)
+        }
         NotificationCenter.default.post(name: .dragSnapGroupsDidChange, object: nil)
     }
     

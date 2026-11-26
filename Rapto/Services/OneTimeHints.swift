@@ -315,6 +315,30 @@ final class OneTimeHints {
         }
     }
 
+    /// Shows `id` directly during an active guided step (such as the interactive tour's notch task)
+    /// without counting against the background display budget.
+    func showImmediate(
+        _ id: HintID,
+        content: HintCardContent,
+        placement: @escaping () -> (SpaceBarHint.Placement, NSScreen)?,
+        autoHideAfter: TimeInterval = 12
+    ) {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+              let appState,
+              let (resolvedPlacement, screen) = placement() else {
+            return
+        }
+        let look = appState.spaceBarController.lookForHint(on: screen)
+        panel.show(
+            content,
+            placement: resolvedPlacement,
+            on: screen,
+            look: look,
+            autoHideAfter: autoHideAfter,
+            onHidden: nil
+        )
+    }
+
     /// Shows `id` immediately up to its limit on `screen` when `stillValid()` holds.
     func showOnce(
         _ id: HintID,

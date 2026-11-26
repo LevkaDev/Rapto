@@ -135,7 +135,311 @@ private struct TipRow: View {
     }
 }
 
-// MARK: - Welcome
+// MARK: - Welcome & Accessibility
+
+struct WelcomeAccessibilityStepView: View {
+    let hasAccessibility: Bool
+    let onRequestAccessibility: () -> Void
+
+    var body: some View {
+        VStack(spacing: 20) {
+            OnboardingHeader(
+                title: "Welcome to Rapto",
+                subtitle: "Arrange windows cleanly without fighting macOS. Allow Accessibility once so Rapto can move and resize windows — nothing leaves your Mac"
+            )
+
+            OnboardingCard {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("Accessibility").font(.body.weight(.semibold))
+                            Text("Required")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Color.orange.opacity(0.15), in: Capsule())
+                        }
+                        Text("Lets Rapto move and resize windows on your Mac")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if hasAccessibility {
+                        Label("Allowed", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.body.weight(.medium))
+                    } else {
+                        Button("Allow…", action: onRequestAccessibility)
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+            .frame(maxWidth: 520)
+
+            if !hasAccessibility {
+                Text("Turn on Rapto in System Settings → Privacy & Security → Accessibility, then come back here")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            } else {
+                Text("Ready to go — next we'll tune Rapto for your screen in one click")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+// MARK: - Auto-Tuned Mode Step
+
+struct AutoTunedModeStepView: View {
+    @Binding var selection: TilingMode
+    @Binding var hovered: TilingMode?
+    @Binding var maxWindows: Int
+    let suggestedMaxWindows: Int
+    let overlayShortcut: String
+    let autoTuneSummary: String
+
+    private var recommendedMode: TilingMode {
+        DisplayProfile.dominant(for: NSScreen.screens).recommendedStarterMode
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            OnboardingHeader(
+                title: "Tuned for your Mac",
+                subtitle: "Pick how you want windows to behave — you can switch or pause Rapto anytime from the menu bar"
+            )
+
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+                Text(autoTuneSummary)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary.opacity(0.88))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.accentColor.opacity(0.10), in: Capsule())
+
+            HStack(spacing: 12) {
+                ForEach(ModeChoice.all(overlayShortcut: overlayShortcut)) { choice in
+                    card(choice)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+
+            // Always laid out and only faded: inserting it at runtime crashes the window's constraint pass
+            windowCountRow
+                .opacity(selection == .autoTiling ? 1 : 0)
+                .allowsHitTesting(selection == .autoTiling)
+                .accessibilityHidden(selection != .autoTiling)
+                .animation(.easeInOut(duration: 0.2), value: selection)
+        }
+    }
+
+    private var windowCountRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Windows on screen")
+                    .font(.headline)
+                Text("Extra windows join a slot as a group. Change it anytime in Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            HStack(spacing: 4) {
+                ForEach(AutoTilingPreferences.maxWindowsRange, id: \.self) { count in
+                    let isSelected = maxWindows == count
+                    let isSuggested = count == suggestedMaxWindows
+                    Button {
+                        maxWindows = count
+                    } label: {
+                        Text("\(count)")
+                            .font(.callout.weight(isSelected ? .semibold : .regular))
+                            .frame(width: 26, height: 24)
+                            .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                            .background(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.06)),
+                                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .strokeBorder(isSuggested && !isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear), lineWidth: 1)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help(isSuggested ? "Recommended for your display" : "")
+                    .accessibilityLabel(isSuggested ? "\(count) windows, recommended for your display" : "\(count) windows")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func card(_ choice: ModeChoice) -> some View {
+        let isSelected = selection == choice.mode
+        let isRecommended = choice.mode == recommendedMode
+        return Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                selection = choice.mode
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: choice.icon)
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(.tint)
+                    Spacer()
+                    if isRecommended {
+                        Text("Recommended")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tint)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                    }
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 16))
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                }
+                Text(choice.title)
+                    .font(.headline)
+                Text(choice.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(hovered == choice.mode ? 0.25 : 0.08)),
+                                  lineWidth: isSelected ? 2 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            hovered = inside ? choice.mode : (hovered == choice.mode ? nil : hovered)
+        }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+// MARK: - Quick Start Step (Arrange + Undo + Launch at Login)
+
+struct QuickStartStepView: View {
+    @EnvironmentObject var appState: AppState
+    @StateObject private var launchAtLogin = LaunchAtLoginManager.shared
+
+    let mode: TilingMode
+    @Binding var didArrange: Bool
+    @State private var openWindowCount: Int = 0
+
+    var body: some View {
+        VStack(spacing: 16) {
+            OnboardingHeader(
+                title: "See Rapto in action",
+                subtitle: "Try arranging your open windows right now — or jump into a 30-second mouse tour"
+            )
+
+            OnboardingCard {
+                HStack(spacing: 12) {
+                    Image(systemName: didArrange ? "checkmark.circle.fill" : "square.grid.2x2")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(didArrange ? Color.green : Color.accentColor)
+                        .frame(width: 24)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(openWindowCount >= 2 ? "Arrange Your Open Windows" : "Try With Sample Windows")
+                            .font(.body.weight(.semibold))
+                        Text(openWindowCount >= 2
+                             ? (didArrange ? "Done — you can undo with one click" : "Neatly lays out \(openWindowCount) windows on this screen")
+                             : "Opens 2 temporary windows you can drag and snap safely")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if appState.hasUndoableFirstArrange {
+                        Button("Put Back") {
+                            appState.undoFirstRunArrange()
+                            didArrange = false
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if openWindowCount >= 2 {
+                        Button(didArrange ? "Arrange Again" : "Arrange Now") {
+                            if appState.arrangeWindowsForFirstRun(mode: mode) {
+                                didArrange = true
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Open 2 Windows") {
+                            appState.openTourSandboxWindows()
+                            refreshCount()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(.vertical, 10)
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    Image(systemName: "power")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.tint)
+                        .frame(width: 24)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Launch Rapto at Login")
+                            .font(.body.weight(.medium))
+                        Text("Keep Rapto ready automatically after you restart your Mac")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: $launchAtLogin.isEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                .padding(.vertical, 8)
+            }
+            .frame(maxWidth: 520)
+
+            HStack(spacing: 8) {
+                Image(systemName: "menubar.rectangle")
+                    .foregroundStyle(.secondary)
+                Text("Look for the Rapto icon in your menu bar anytime to switch modes, pause or open Settings")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .frame(maxWidth: 520, alignment: .leading)
+        }
+        .onAppear {
+            refreshCount()
+        }
+    }
+
+    private func refreshCount() {
+        openWindowCount = appState.eligibleWindowsForFirstArrange(on: appState.screenManager.activeScreen()).count
+    }
+}
+
+// MARK: - Welcome (legacy reference kept clean)
 
 struct WelcomeStepView: View {
     var body: some View {

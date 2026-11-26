@@ -138,6 +138,9 @@ class WindowClassifier {
     // MARK: - Private Classification Logic
     
     private func performClassification(_ window: WindowInfo) -> WindowClassification {
+        if TourSandboxWindows.contains(window.windowID) {
+            return .tilable
+        }
         
         if let bundleID = window.bundleIdentifier, userExcludedBundleIDs.contains(bundleID) {
             return .notTilable(.userBlacklist)
