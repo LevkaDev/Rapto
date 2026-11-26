@@ -10,7 +10,32 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Fixed
+- Restoring a Manual layout (such as switching back from Auto-tiling to Manual) could stack an
+  unassigned window into an occupied slot by frame overlap while leaving another slot empty.
+  `AppState.processUnassignedWindowsAfterRestore` now excludes all windows already restored into
+  any slot group (not only each slot's front window), skips floating/non-tilable windows, and
+  uses a two-pass `unassignedRestoreSlots(containingSlots:initialWindowCounts:)` pass so windows
+  already over an empty slot keep it and remaining unassigned windows fill empty slots before
+  joining occupied ones.
+
 ### Changed
+- **Calmer, single-beat window transitions without focus theft** (`AccessibilityService`,
+  `WindowHighlightService`, `AppState+Modes`, `AutoTilingService`, `AppState+Layouts`):
+  - Switching from Auto-tiling to Manual now inherits the live Auto-tiling grid in place (zero
+    window moves) and discards stale Manual snapshots instead of yanking windows back to an older
+    Manual layout; returning from None or Drag-to-Snap still restores the kept Manual snapshot.
+  - Added `AccessibilityService.batchSetWindowFrames(_:onWillMove:)`, which skips windows already
+    within `1.5 pt` of their target frame, dispatches distinct app PIDs concurrently while keeping
+    same-app order, and shares a single `20 ms` verification/retry cycle instead of serial domino
+    repositioning across `AutoTilingService`, `putWindowsBack`, `applyManualModeTemplate`, and
+    `restoreLayoutToOriginal`.
+  - Replaced activating `raiseWindow(_:)` loops during batch restores and redistributions with
+    silent `AXRaiseAction` (`raiseWindow(axWindow:)`) on grouped slots (`2+` windows) only,
+    preventing menu-bar flashing and background apps from stealing keyboard focus.
+  - Added `WindowHighlightService.beginLayoutTransition()` / `endLayoutTransition()` so the active
+    window highlight and group indicators step aside during multi-window moves and fade smoothly
+    back in (`0.14 s`, or `0.08 s` under Reduce Motion) once frames settle.
 - **More reliable and faster desktop window move grabbing** (`DesktopMoveGrabPlanner`,
   `DesktopMoveGrabMemory`, `SpaceBarController`):
   - Computes widest empty horizontal gaps between top-strip Accessibility controls (and checks

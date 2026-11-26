@@ -7,9 +7,11 @@
 
 ### Improvements
 - Moving windows between desktops from the Desktops Bar or by shortcut is now faster and more reliable across browsers, Electron apps, and windows without standard title-bar buttons.
+- Layout changes and mode switches now move windows together in one calm step instead of one by one, keep your current active window focused, and gently fade the active-window border back in once windows settle.
 
 ### Fixes
-- 
+- Switching from Auto-tiling to Manual mode now keeps your windows right where they are instead of reshuffling them back to an earlier Manual snapshot.
+- Restoring a Manual layout now places newly opened windows into empty slots first instead of stacking them onto an occupied slot while another slot sits empty, and no longer steals focus to background apps.
 
 ---
 
