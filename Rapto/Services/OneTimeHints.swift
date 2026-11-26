@@ -244,8 +244,8 @@ enum OneTimeHintCopy {
 
     nonisolated static func manyWindowsFlow(shortcut: String?) -> HintCardContent {
         let validShortcut = (shortcut?.isEmpty == false) ? shortcut : nil
-        let detail = validShortcut.map { "Press \($0) to flip through every window visually" }
-            ?? "Open Settings → Shortcuts to set a key for Window Flow"
+        let detail = validShortcut.map { "Click the Flow button on the bar or press \($0) to browse windows" }
+            ?? "Click the Flow button on the Desktops Bar to browse all windows in 3D"
         return HintCardContent(
             icon: "rectangle.stack.badge.play",
             title: "Lots of Windows Open?",

@@ -334,7 +334,7 @@ private struct SpaceBarHintView: View {
     private static let cornerRadius: CGFloat = 14
 
     private var accentColor: Color {
-        content.isWarning ? Color.orange : Color.white
+        content.isWarning ? Color.orange : WindowFlowThemeTokens.accentSky
     }
 
     var body: some View {
@@ -370,31 +370,12 @@ private struct SpaceBarHintView: View {
         .background {
             ZStack {
                 HudPillBlurView(cornerRadius: Self.cornerRadius)
-                shape.fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.08, green: 0.09, blue: 0.12).opacity(0.64),
-                            Color(red: 0.04, green: 0.05, blue: 0.07).opacity(0.76)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+                shape.fill(WindowFlowThemeTokens.glassFill)
             }
         }
         .clipShape(shape)
         .overlay {
-            shape.strokeBorder(
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.26),
-                        Color.white.opacity(0.08)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                ),
-                lineWidth: 1
-            )
+            shape.strokeBorder(WindowFlowThemeTokens.rimGradient, lineWidth: 1)
         }
     }
 
@@ -402,11 +383,11 @@ private struct SpaceBarHintView: View {
         let badgeShape = RoundedRectangle(cornerRadius: 8.5, style: .continuous)
         return ZStack {
             badgeShape
-                .fill(content.isWarning ? Color.orange.opacity(0.20) : Color.white.opacity(0.11))
+                .fill(content.isWarning ? Color.orange.opacity(0.20) : WindowFlowThemeTokens.accentBlue.opacity(0.20))
             badgeShape
                 .strokeBorder(
-                    content.isWarning ? Color.orange.opacity(0.38) : Color.white.opacity(0.18),
-                    lineWidth: 0.5
+                    content.isWarning ? Color.orange.opacity(0.38) : WindowFlowThemeTokens.accentSky.opacity(0.32),
+                    lineWidth: 0.75
                 )
             Image(systemName: content.icon)
                 .font(.system(size: 13.5, weight: .semibold))
@@ -473,14 +454,14 @@ private struct NotchUpwardPointer: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color(red: 0.06, green: 0.07, blue: 0.10).opacity(0.82))
+                .fill(WindowFlowThemeTokens.glassFill)
                 .overlay(
                     Circle()
-                        .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                        .strokeBorder(WindowFlowThemeTokens.rimGradient, lineWidth: 1)
                 )
             Image(systemName: "arrow.up")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(WindowFlowThemeTokens.accentSky)
         }
         .frame(width: 26, height: 26)
         .offset(y: (!reduceMotion && lift) ? -3 : 2)

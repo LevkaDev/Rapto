@@ -78,12 +78,12 @@ struct OneTimeHintsTests {
         #expect(OneTimeHintCopy.manyWindowsFlow(shortcut: "⌥⇥") == HintCardContent(
             icon: "rectangle.stack.badge.play",
             title: "Lots of Windows Open?",
-            detail: "Press ⌥⇥ to flip through every window visually"
+            detail: "Click the Flow button on the bar or press ⌥⇥ to browse windows"
         ))
         #expect(OneTimeHintCopy.manyWindowsFlow(shortcut: nil) == HintCardContent(
             icon: "rectangle.stack.badge.play",
             title: "Lots of Windows Open?",
-            detail: "Open Settings → Shortcuts to set a key for Window Flow"
+            detail: "Click the Flow button on the Desktops Bar to browse all windows in 3D"
         ))
         #expect(OneTimeHintCopy.workspacesTip == HintCardContent(
             icon: "square.stack.3d.up",
