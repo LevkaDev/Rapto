@@ -677,6 +677,21 @@ extension AppState {
         tempZones[index] = zone
         logger.info("Updated temp zone \(index + 1)")
     }
+
+    /// Replace a placed zone with two adjacent halves, keeping fill order sequential
+    func splitTempZone(_ zone: Zone, into first: Zone, and second: Zone) {
+        guard let index = tempZones.firstIndex(where: { $0.id == zone.id }) else { return }
+        tempZones[index] = first
+        tempZones.insert(second, at: index + 1)
+        for i in 0..<tempZones.count {
+            tempZones[i] = Zone(
+                id: tempZones[i].id,
+                relativeFrame: tempZones[i].relativeFrame,
+                fillOrder: i
+            )
+        }
+        logger.info("Split temp zone \(index + 1), now \(self.tempZones.count) zones")
+    }
     
     func clearTempZones() {
         tempZones = []

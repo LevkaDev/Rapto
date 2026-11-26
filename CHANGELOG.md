@@ -48,6 +48,13 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
   joining occupied ones.
 
 ### Changed
+- **Magnetic snapping, one-click split, and clean draft completion in the custom layout editor** (`ZoneCreatorView`,
+  `ZoneEditorGeometry`, `OverlayView`, `AppState+Layouts`): moving or resizing a zone now snaps
+  within `12 pt` to screen edges, neighboring zone edges/centers, and `1/4`, `1/3`, `1/2`, `2/3`,
+  `3/4` guides with visual guide lines (bypassed while holding Option), and adds one-click vertical
+  and horizontal split buttons centered with the zone controls with a hover cut-line preview.
+  Confirming a draft zone now places it and closes the draft cleanly (use `+ Add Zone` or click an
+  empty area to add another zone, or `×` to dismiss an unwanted draft).
 - **Simultaneous parallel window swaps** (`WindowSwapService`, `AppState+Hotkeys`): mouse
   drag-drop swaps and keyboard slot swaps now move both windows concurrently via
   `AccessibilityService.batchSetWindowFrames` with a calm highlight border fade-in instead of

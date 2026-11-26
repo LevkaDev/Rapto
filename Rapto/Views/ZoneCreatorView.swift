@@ -52,6 +52,330 @@ private enum ZoneDesign {
     static let edgeHandleLength: CGFloat = 48
 }
 
+// MARK: - Snapping & Splitting Geometry
+
+nonisolated enum ZoneSnapAxis: Equatable, Sendable {
+    case vertical
+    case horizontal
+}
+
+nonisolated enum ZoneSnapKind: Equatable, Sendable {
+    case screenEdge
+    case neighbor
+    case fraction(String)
+}
+
+nonisolated struct ZoneSnapGuide: Equatable, Sendable {
+    let axis: ZoneSnapAxis
+    /// Position in SwiftUI editor coordinates (points from top-left)
+    let position: CGFloat
+    let kind: ZoneSnapKind
+}
+
+nonisolated enum ZoneSplitAxis: Equatable, Sendable {
+    /// Splits left and right (side by side)
+    case vertical
+    /// Splits top and bottom (stacked)
+    case horizontal
+}
+
+nonisolated enum ZoneEditorGeometry {
+    static let defaultSnapThreshold: CGFloat = 12
+
+    private static let guideFractions: [(value: CGFloat, label: String)] = [
+        (1.0 / 4.0, "1/4"),
+        (1.0 / 3.0, "1/3"),
+        (1.0 / 2.0, "1/2"),
+        (2.0 / 3.0, "2/3"),
+        (3.0 / 4.0, "3/4"),
+    ]
+
+    private struct SnapCandidate {
+        let position: CGFloat
+        let kind: ZoneSnapKind
+        /// Lower priority wins ties at the same distance (edges and neighbors beat screen fractions)
+        let priority: Int
+    }
+
+    private static func candidates(
+        axis: ZoneSnapAxis,
+        containerSize: CGSize,
+        otherFrames: [CGRect],
+        includeCenters: Bool
+    ) -> [SnapCandidate] {
+        let span = axis == .vertical ? containerSize.width : containerSize.height
+        var result: [SnapCandidate] = [
+            SnapCandidate(position: 0, kind: .screenEdge, priority: 0),
+            SnapCandidate(position: span, kind: .screenEdge, priority: 0),
+        ]
+        for frame in otherFrames {
+            if axis == .vertical {
+                result.append(SnapCandidate(position: frame.minX, kind: .neighbor, priority: 1))
+                result.append(SnapCandidate(position: frame.maxX, kind: .neighbor, priority: 1))
+                if includeCenters {
+                    result.append(SnapCandidate(position: frame.midX, kind: .neighbor, priority: 2))
+                }
+            } else {
+                result.append(SnapCandidate(position: frame.minY, kind: .neighbor, priority: 1))
+                result.append(SnapCandidate(position: frame.maxY, kind: .neighbor, priority: 1))
+                if includeCenters {
+                    result.append(SnapCandidate(position: frame.midY, kind: .neighbor, priority: 2))
+                }
+            }
+        }
+        for fraction in guideFractions {
+            result.append(SnapCandidate(position: span * fraction.value, kind: .fraction(fraction.label), priority: 2))
+        }
+        return result
+    }
+
+    private static func bestDelta(
+        anchors: [CGFloat],
+        candidates: [SnapCandidate],
+        threshold: CGFloat
+    ) -> (delta: CGFloat, candidate: SnapCandidate)? {
+        var best: (distance: CGFloat, delta: CGFloat, candidate: SnapCandidate)?
+        for anchor in anchors {
+            for candidate in candidates {
+                let delta = candidate.position - anchor
+                let distance = abs(delta)
+                guard distance <= threshold else { continue }
+                if let current = best {
+                    let closer = distance < current.distance - 0.01
+                    let sameDistanceBetterPriority = abs(distance - current.distance) <= 0.01
+                        && candidate.priority < current.candidate.priority
+                    if closer || sameDistanceBetterPriority {
+                        best = (distance, delta, candidate)
+                    }
+                } else {
+                    best = (distance, delta, candidate)
+                }
+            }
+        }
+        return best.map { ($0.delta, $0.candidate) }
+    }
+
+    /// Snaps a moved zone to screen edges, neighbor zone edges, and 1/4, 1/3, 1/2 guides.
+    static func snapMovedFrame(
+        _ frame: CGRect,
+        containerSize: CGSize,
+        otherFrames: [CGRect],
+        threshold: CGFloat = defaultSnapThreshold,
+        enabled: Bool = true
+    ) -> (frame: CGRect, guides: [ZoneSnapGuide]) {
+        var snapped = frame
+        snapped.origin.x = max(0, min(snapped.origin.x, containerSize.width - snapped.width))
+        snapped.origin.y = max(0, min(snapped.origin.y, containerSize.height - snapped.height))
+        guard enabled else { return (snapped, []) }
+
+        var guides: [ZoneSnapGuide] = []
+
+        let xCandidates = candidates(axis: .vertical, containerSize: containerSize, otherFrames: otherFrames, includeCenters: true)
+        if let match = bestDelta(anchors: [snapped.minX, snapped.maxX, snapped.midX], candidates: xCandidates, threshold: threshold) {
+            let proposedX = snapped.origin.x + match.delta
+            if proposedX >= -0.01 && proposedX + snapped.width <= containerSize.width + 0.01 {
+                snapped.origin.x = max(0, min(proposedX, containerSize.width - snapped.width))
+                guides.append(ZoneSnapGuide(axis: .vertical, position: match.candidate.position, kind: match.candidate.kind))
+            }
+        }
+
+        let yCandidates = candidates(axis: .horizontal, containerSize: containerSize, otherFrames: otherFrames, includeCenters: true)
+        if let match = bestDelta(anchors: [snapped.minY, snapped.maxY, snapped.midY], candidates: yCandidates, threshold: threshold) {
+            let proposedY = snapped.origin.y + match.delta
+            if proposedY >= -0.01 && proposedY + snapped.height <= containerSize.height + 0.01 {
+                snapped.origin.y = max(0, min(proposedY, containerSize.height - snapped.height))
+                guides.append(ZoneSnapGuide(axis: .horizontal, position: match.candidate.position, kind: match.candidate.kind))
+            }
+        }
+
+        return (snapped, guides)
+    }
+
+    /// Snaps the edges currently being dragged during a resize while keeping opposite edges fixed.
+    static func snapResizedFrame(
+        _ frame: CGRect,
+        edges: Set<ResizableZoneWindow.Edge>,
+        minSize: CGFloat,
+        containerSize: CGSize,
+        otherFrames: [CGRect],
+        threshold: CGFloat = defaultSnapThreshold,
+        enabled: Bool = true
+    ) -> (frame: CGRect, guides: [ZoneSnapGuide]) {
+        var snapped = ResizableZoneWindow.clamped(frame, to: containerSize)
+        guard enabled, snapped.width >= minSize, snapped.height >= minSize else {
+            return (snapped, [])
+        }
+
+        var guides: [ZoneSnapGuide] = []
+
+        let xCandidates = candidates(axis: .vertical, containerSize: containerSize, otherFrames: otherFrames, includeCenters: false)
+        if edges.contains(.left),
+           let match = bestDelta(anchors: [snapped.minX], candidates: xCandidates, threshold: threshold) {
+            let newMinX = match.candidate.position
+            let newWidth = snapped.maxX - newMinX
+            if newMinX >= 0 && newWidth >= minSize {
+                snapped.origin.x = newMinX
+                snapped.size.width = newWidth
+                guides.append(ZoneSnapGuide(axis: .vertical, position: newMinX, kind: match.candidate.kind))
+            }
+        } else if edges.contains(.right),
+                  let match = bestDelta(anchors: [snapped.maxX], candidates: xCandidates, threshold: threshold) {
+            let newMaxX = match.candidate.position
+            let newWidth = newMaxX - snapped.minX
+            if newMaxX <= containerSize.width && newWidth >= minSize {
+                snapped.size.width = newWidth
+                guides.append(ZoneSnapGuide(axis: .vertical, position: newMaxX, kind: match.candidate.kind))
+            }
+        }
+
+        let yCandidates = candidates(axis: .horizontal, containerSize: containerSize, otherFrames: otherFrames, includeCenters: false)
+        if edges.contains(.top),
+           let match = bestDelta(anchors: [snapped.minY], candidates: yCandidates, threshold: threshold) {
+            let newMinY = match.candidate.position
+            let newHeight = snapped.maxY - newMinY
+            if newMinY >= 0 && newHeight >= minSize {
+                snapped.origin.y = newMinY
+                snapped.size.height = newHeight
+                guides.append(ZoneSnapGuide(axis: .horizontal, position: newMinY, kind: match.candidate.kind))
+            }
+        } else if edges.contains(.bottom),
+                  let match = bestDelta(anchors: [snapped.maxY], candidates: yCandidates, threshold: threshold) {
+            let newMaxY = match.candidate.position
+            let newHeight = newMaxY - snapped.minY
+            if newMaxY <= containerSize.height && newHeight >= minSize {
+                snapped.size.height = newHeight
+                guides.append(ZoneSnapGuide(axis: .horizontal, position: newMaxY, kind: match.candidate.kind))
+            }
+        }
+
+        return (snapped, guides)
+    }
+
+    /// Splits a SwiftUI editor frame into two equal adjacent frames, or nil if either half would
+    /// be smaller than `minSize`. Left comes before right; top comes before bottom.
+    static func split(
+        _ frame: CGRect,
+        axis: ZoneSplitAxis,
+        minSize: CGFloat
+    ) -> (first: CGRect, second: CGRect)? {
+        switch axis {
+        case .vertical:
+            let halfWidth = frame.width / 2
+            guard halfWidth >= minSize else { return nil }
+            let left = CGRect(x: frame.minX, y: frame.minY, width: halfWidth, height: frame.height)
+            let right = CGRect(x: frame.minX + halfWidth, y: frame.minY, width: frame.width - halfWidth, height: frame.height)
+            return (left, right)
+        case .horizontal:
+            let halfHeight = frame.height / 2
+            guard halfHeight >= minSize else { return nil }
+            let top = CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: halfHeight)
+            let bottom = CGRect(x: frame.minX, y: frame.minY + halfHeight, width: frame.width, height: frame.height - halfHeight)
+            return (top, bottom)
+        }
+    }
+
+    /// Splits a draft frame into a first half to place immediately and a second half for the live draft.
+    static func splitDraft(
+        currentFrame: CGRect,
+        axis: ZoneSplitAxis,
+        minSize: CGFloat
+    ) -> (placed: CGRect, nextDraft: CGRect)? {
+        guard let halves = split(currentFrame, axis: axis, minSize: minSize) else { return nil }
+        return (placed: halves.first, nextDraft: halves.second)
+    }
+
+    /// Vertical center for the zone's control cluster (+/checkmark, split, delete) so it stays
+    /// visible below the top toolbar and above the bottom instruction bar whenever the zone has room.
+    static func controlsCenterY(
+        for frame: CGRect,
+        containerSize: CGSize,
+        topOverlayClearance: CGFloat = 114,
+        bottomOverlayClearance: CGFloat = 114,
+        minTopInset: CGFloat = 34,
+        minBottomInset: CGFloat = 46
+    ) -> CGFloat {
+        let minY = frame.minY + minTopInset
+        let maxY = frame.maxY - minBottomInset
+        guard minY <= maxY else { return frame.midY }
+
+        let safeTop = topOverlayClearance
+        let safeBottom = max(safeTop, containerSize.height - bottomOverlayClearance)
+
+        if frame.midY < safeTop, maxY > frame.midY {
+            return min(safeTop, maxY)
+        }
+        if frame.midY > safeBottom, minY < frame.midY {
+            return max(safeBottom, minY)
+        }
+        return min(max(frame.midY, minY), maxY)
+    }
+
+    /// Creates a draft rect centered around `point` and clamped inside `containerSize`.
+    static func draftFrame(
+        centeredAt point: CGPoint,
+        size: CGSize = CGSize(width: 300, height: 200),
+        in containerSize: CGSize
+    ) -> CGRect {
+        let width = min(size.width, containerSize.width)
+        let height = min(size.height, containerSize.height)
+        let maxX = max(0, containerSize.width - width)
+        let maxY = max(0, containerSize.height - height)
+        let x = min(max(0, point.x - width / 2), maxX)
+        let y = min(max(0, point.y - height / 2), maxY)
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Picks a starting frame for a new draft zone, preferring an open area away from existing zones.
+    static func defaultDraftFrame(
+        in containerSize: CGSize,
+        existingFrames: [CGRect],
+        preferredSize: CGSize = CGSize(width: 300, height: 200)
+    ) -> CGRect {
+        let candidates: [(CGFloat, CGFloat)] = [
+            (0.5, 0.5),
+            (0.75, 0.5),
+            (0.25, 0.5),
+            (0.5, 0.72),
+            (0.5, 0.28),
+            (0.75, 0.72),
+            (0.25, 0.72),
+            (0.75, 0.28),
+            (0.25, 0.28),
+        ]
+
+        var bestFrame = draftFrame(
+            centeredAt: CGPoint(x: containerSize.width / 2, y: containerSize.height / 2),
+            size: preferredSize,
+            in: containerSize
+        )
+        if existingFrames.isEmpty {
+            return bestFrame
+        }
+
+        var bestOverlap = CGFloat.greatestFiniteMagnitude
+        for (fx, fy) in candidates {
+            let candidate = draftFrame(
+                centeredAt: CGPoint(x: containerSize.width * fx, y: containerSize.height * fy),
+                size: preferredSize,
+                in: containerSize
+            )
+            let overlap = existingFrames.reduce(CGFloat(0)) { total, other in
+                let rect = candidate.intersection(other)
+                guard !rect.isNull, rect.width > 0, rect.height > 0 else { return total }
+                return total + rect.width * rect.height
+            }
+            if overlap < bestOverlap {
+                bestOverlap = overlap
+                bestFrame = candidate
+                if overlap == 0 {
+                    break
+                }
+            }
+        }
+        return bestFrame
+    }
+}
+
 struct ZoneCreatorView: View {
     /// Screen size (width x height) to calculate relative frames
     /// This should be the visible screen area size, NOT including origin
@@ -59,23 +383,37 @@ struct ZoneCreatorView: View {
     
     /// Currently created zones (relative frames)
     @Binding var zones: [Zone]
+
+    /// Whether a new draft zone is currently active on the canvas
+    @Binding var isShowingDraft: Bool
+
+    /// False in single-zone editors (such as Focus Mode zone selection)
+    var allowsSplitting: Bool = true
     
     let onZoneCreated: (Zone) -> Void
 
     let onZoneUpdated: (Zone) -> Void
     
     let onZoneDeleted: (Zone) -> Void
+
+    var onZoneSplit: ((Zone, Zone, Zone) -> Void)? = nil
     
     @State private var currentZoneFrame: CGRect = CGRect(x: 100, y: 100, width: 300, height: 200)
 
-    /// Zone being resized again. Nil while drawing the next zone.
+    /// Zone being resized again. Nil while drawing a new zone or idle.
     @State private var editingZoneID: UUID?
 
-    /// Frame of the zone being drawn, kept while an earlier zone is resized
+    /// Frame of the draft zone, kept while an earlier zone is being edited
     @State private var draftFrame: CGRect?
+
+    /// Set when a canvas click spawned the draft at a specific point so onChange doesn't recenter it
+    @State private var didPositionDraftFromTap = false
 
     /// Single click waits briefly so a double-click can still delete the zone
     @State private var pendingEdit: DispatchWorkItem?
+
+    /// Active magnetic alignment guides shown while dragging or resizing a zone
+    @State private var activeSnapGuides: [ZoneSnapGuide] = []
     
     private let minSize: CGFloat = 100
 
@@ -92,11 +430,26 @@ struct ZoneCreatorView: View {
             // Use provided screenSize for normalization
             // This is the actual visible screen area that windows can occupy
             let normalizationSize = screenSize
+            let existingFrames = zones.map { absoluteFrame(for: $0.relativeFrame, in: normalizationSize) }
             
             ZStack {
-                // Transparent, hit-testable background that fills the whole area
+                // Transparent, hit-testable background: click empty space to finish editing or start a new zone
                 Color.clear
                     .contentShape(Rectangle())
+                    .onTapGesture(coordinateSpace: .local) { location in
+                        if editingZoneID != nil {
+                            finishEditing(in: normalizationSize)
+                        } else if !isShowingDraft && (allowsSplitting || zones.isEmpty) {
+                            withAnimation(editAnimation) {
+                                currentZoneFrame = ZoneEditorGeometry.draftFrame(
+                                    centeredAt: location,
+                                    in: normalizationSize
+                                )
+                                didPositionDraftFromTap = true
+                                isShowingDraft = true
+                            }
+                        }
+                    }
                 
                 // Display existing zones. The one being resized is the live window below.
                 ForEach(Array(zones.enumerated()), id: \.element.id) { index, zone in
@@ -116,33 +469,84 @@ struct ZoneCreatorView: View {
                     }
                 }
                 
-                ResizableZoneWindow(
-                    frame: $currentZoneFrame,
-                    minSize: minSize,
-                    containerSize: normalizationSize,
-                    isEditing: editingZoneID != nil,
-                    zoneNumber: editingZoneNumber,
-                    showsFirstZonePrompt: zones.isEmpty,
-                    onConfirm: {
-                        if editingZoneID != nil {
-                            finishEditing(in: normalizationSize)
-                        } else {
-                            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.4, dampingFraction: 0.75)) {
-                                createZone(from: currentZoneFrame, in: normalizationSize)
+                if editingZoneID != nil || isShowingDraft {
+                    let otherFrames = zones
+                        .filter { $0.id != editingZoneID }
+                        .map { absoluteFrame(for: $0.relativeFrame, in: normalizationSize) }
+
+                    ResizableZoneWindow(
+                        frame: $currentZoneFrame,
+                        minSize: minSize,
+                        containerSize: normalizationSize,
+                        otherZoneFrames: otherFrames,
+                        activeGuides: $activeSnapGuides,
+                        isEditing: editingZoneID != nil,
+                        zoneNumber: editingZoneNumber,
+                        showsFirstZonePrompt: zones.isEmpty,
+                        onConfirm: {
+                            if editingZoneID != nil {
+                                finishEditing(in: normalizationSize)
+                            } else {
+                                withAnimation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.4, dampingFraction: 0.75)) {
+                                    createZone(from: currentZoneFrame, in: normalizationSize)
+                                    isShowingDraft = false
+                                }
                             }
-                        }
-                    },
-                    onDelete: editingZoneID == nil ? nil : {
-                        deleteEditingZone()
-                    }
-                )
+                        },
+                        onSplit: allowsSplitting ? { axis in
+                            withAnimation(editAnimation) {
+                                splitCurrentZone(along: axis, in: normalizationSize)
+                            }
+                        } : nil,
+                        onDelete: editingZoneID == nil ? nil : {
+                            deleteEditingZone()
+                        },
+                        onDismissDraft: (editingZoneID == nil && !zones.isEmpty) ? {
+                            withAnimation(editAnimation) {
+                                isShowingDraft = false
+                            }
+                        } : nil
+                    )
+                }
+
+                if !activeSnapGuides.isEmpty {
+                    SnapGuidesOverlay(guides: activeSnapGuides, size: normalizationSize)
+                        .allowsHitTesting(false)
+                }
             }
             .onAppear {
-                currentZoneFrame = CGRect(
-                    x: (normalizationSize.width - 300) / 2,
-                    y: (normalizationSize.height - 200) / 2,
-                    width: 300,
-                    height: 200
+                currentZoneFrame = ZoneEditorGeometry.defaultDraftFrame(
+                    in: normalizationSize,
+                    existingFrames: existingFrames
+                )
+                isShowingDraft = zones.isEmpty
+            }
+            .onChange(of: zones.isEmpty) { _, isEmpty in
+                if isEmpty {
+                    editingZoneID = nil
+                    draftFrame = nil
+                    currentZoneFrame = ZoneEditorGeometry.defaultDraftFrame(
+                        in: normalizationSize,
+                        existingFrames: []
+                    )
+                    isShowingDraft = true
+                }
+            }
+            .onChange(of: isShowingDraft) { _, showing in
+                guard showing else { return }
+                if didPositionDraftFromTap {
+                    didPositionDraftFromTap = false
+                    return
+                }
+                if editingZoneID != nil {
+                    commitEditing(in: normalizationSize)
+                    editingZoneID = nil
+                    draftFrame = nil
+                }
+                let latestFrames = zones.map { absoluteFrame(for: $0.relativeFrame, in: normalizationSize) }
+                currentZoneFrame = ZoneEditorGeometry.defaultDraftFrame(
+                    in: normalizationSize,
+                    existingFrames: latestFrames
                 )
             }
         }
@@ -168,14 +572,14 @@ struct ZoneCreatorView: View {
     }
 
     /// Pick up a placed zone so it can be moved and resized again.
-    /// The zone still being drawn is remembered and comes back on confirm.
+    /// Any open draft zone is remembered and comes back on confirm.
     private func beginEditing(_ zone: Zone, in size: CGSize) {
         guard zones.contains(where: { $0.id == zone.id }) else { return }
         guard zone.id != editingZoneID else { return }
         if editingZoneID != nil {
             commitEditing(in: size)
         } else {
-            draftFrame = currentZoneFrame
+            draftFrame = isShowingDraft ? currentZoneFrame : nil
         }
         withAnimation(editAnimation) {
             editingZoneID = zone.id
@@ -195,7 +599,7 @@ struct ZoneCreatorView: View {
         onZoneUpdated(updated)
     }
 
-    /// Keep the resized zone and return to the zone that was being drawn
+    /// Keep the resized zone and restore any draft that was open before editing
     private func finishEditing(in size: CGSize) {
         commitEditing(in: size)
         let savedDraft = draftFrame
@@ -203,12 +607,14 @@ struct ZoneCreatorView: View {
             editingZoneID = nil
             if let savedDraft {
                 currentZoneFrame = savedDraft
+            } else {
+                isShowingDraft = false
             }
             draftFrame = nil
         }
     }
 
-    /// Remove the zone being resized and return to the zone that was being drawn
+    /// Remove the zone being resized and restore any draft that was open before editing
     private func deleteEditingZone() {
         guard let id = editingZoneID,
               let zone = zones.first(where: { $0.id == id }) else { return }
@@ -217,6 +623,8 @@ struct ZoneCreatorView: View {
             editingZoneID = nil
             if let savedDraft {
                 currentZoneFrame = savedDraft
+            } else {
+                isShowingDraft = false
             }
             draftFrame = nil
             onZoneDeleted(zone)
@@ -230,6 +638,50 @@ struct ZoneCreatorView: View {
         )
         
         onZoneCreated(zone)
+    }
+
+    /// Splits either the zone being edited into two placed halves, or the draft zone into a placed
+    /// first half and a live draft occupying the second half.
+    private func splitCurrentZone(along axis: ZoneSplitAxis, in size: CGSize) {
+        if let id = editingZoneID,
+           let zone = zones.first(where: { $0.id == id }) {
+            guard let split = ZoneEditorGeometry.split(currentZoneFrame, axis: axis, minSize: minSize) else { return }
+            let first = Zone(
+                id: zone.id,
+                relativeFrame: relativeFrame(from: split.first, in: size),
+                fillOrder: zone.fillOrder
+            )
+            let second = Zone(
+                relativeFrame: relativeFrame(from: split.second, in: size),
+                fillOrder: zone.fillOrder + 1
+            )
+            if let onZoneSplit {
+                onZoneSplit(zone, first, second)
+            } else {
+                onZoneUpdated(first)
+                onZoneCreated(second)
+            }
+            let savedDraft = draftFrame
+            editingZoneID = nil
+            if let savedDraft {
+                currentZoneFrame = savedDraft
+            } else {
+                isShowingDraft = false
+            }
+            draftFrame = nil
+        } else {
+            guard let split = ZoneEditorGeometry.splitDraft(
+                currentFrame: currentZoneFrame,
+                axis: axis,
+                minSize: minSize
+            ) else { return }
+            let first = Zone(
+                relativeFrame: relativeFrame(from: split.placed, in: size),
+                fillOrder: zones.count
+            )
+            onZoneCreated(first)
+            currentZoneFrame = split.nextDraft
+        }
     }
 
     private func relativeFrame(from frame: CGRect, in size: CGSize) -> CGRect {
@@ -269,6 +721,10 @@ struct ResizableZoneWindow: View {
     @Binding var frame: CGRect
     let minSize: CGFloat
     let containerSize: CGSize
+    /// Frames of other placed zones (SwiftUI editor coordinates) used as magnetic snap targets
+    var otherZoneFrames: [CGRect] = []
+    /// Active snap guides driven during drag/resize gestures
+    @Binding var activeGuides: [ZoneSnapGuide]
     /// True while an already placed zone is being resized
     var isEditing: Bool = false
     /// Badge number of the zone being resized
@@ -276,18 +732,79 @@ struct ResizableZoneWindow: View {
     /// Shows a brief prompt inside the frame before the first zone has been placed
     var showsFirstZonePrompt: Bool = false
     let onConfirm: () -> Void
+    /// Splits this zone into two equal halves (left/right or top/bottom)
+    var onSplit: ((ZoneSplitAxis) -> Void)? = nil
     /// Deletes the zone being resized. Absent while drawing a new zone.
     var onDelete: (() -> Void)? = nil
+    /// Dismisses an extra draft zone without placing it. Present only once at least one zone exists.
+    var onDismissDraft: (() -> Void)? = nil
     
     @State private var dragStartFrame: CGRect? = nil
     
     @State private var isHoveringAdd = false
+
+    /// Split axis currently hovered, used to preview the cut line across the zone
+    @State private var hoveredSplitAxis: ZoneSplitAxis? = nil
     
     /// Drives the pulsing border glow
     @State private var pulseAnimation = false
     
-    enum Edge { case top, bottom, left, right }
-    enum Corner { case topLeft, topRight, bottomLeft, bottomRight }
+    nonisolated enum Edge: Hashable, Sendable { case top, bottom, left, right }
+    nonisolated enum Corner: Hashable, Sendable { case topLeft, topRight, bottomLeft, bottomRight }
+
+    private var canSplitVertically: Bool {
+        onSplit != nil && frame.width >= minSize * 2
+    }
+
+    private var canSplitHorizontally: Bool {
+        onSplit != nil && frame.height >= minSize * 2
+    }
+
+    private var hasSplitActions: Bool {
+        canSplitVertically || canSplitHorizontally
+    }
+
+    private var hasSecondaryActions: Bool {
+        hasSplitActions || onDelete != nil || onDismissDraft != nil
+    }
+
+    private var activeSplitPreview: ZoneSplitAxis? {
+        switch hoveredSplitAxis {
+        case .vertical where canSplitVertically:
+            return .vertical
+        case .horizontal where canSplitHorizontally:
+            return .horizontal
+        default:
+            return nil
+        }
+    }
+
+    private var isSnappingEnabled: Bool {
+        !NSEvent.modifierFlags.contains(.option)
+    }
+
+    private var stacksActionsBelowConfirm: Bool {
+        frame.height >= 190
+    }
+
+    private var confirmButtonDiameter: CGFloat {
+        frame.height < 130 ? 46 : 56
+    }
+
+    private var hasTopStatusBadge: Bool {
+        (isEditing && zoneNumber != nil) || (showsFirstZonePrompt && frame.width >= 210 && frame.height >= 200)
+    }
+
+    private var controlsCenterY: CGFloat {
+        let minTop: CGFloat = stacksActionsBelowConfirm ? (hasTopStatusBadge ? 66 : 54) : 30
+        let minBottom: CGFloat = stacksActionsBelowConfirm ? (hasTopStatusBadge ? 94 : 78) : 44
+        return ZoneEditorGeometry.controlsCenterY(
+            for: frame,
+            containerSize: containerSize,
+            minTopInset: minTop,
+            minBottomInset: minBottom
+        )
+    }
     
     var body: some View {
         ZStack {
@@ -329,89 +846,14 @@ struct ResizableZoneWindow: View {
                     pulseAnimation = true
                 }
             }
-            
-            // Add a new zone, or keep the resize of one already placed
-            Button(action: onConfirm) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    confirmHue.opacity(isHoveringAdd ? 0.4 : 0.2),
-                                    Color.clear
-                                ],
-                                center: .center,
-                                startRadius: 20,
-                                endRadius: 45
-                            )
-                        )
-                        .frame(width: 90, height: 90)
-                    
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: isEditing
-                                    ? [
-                                        Color(hue: 0.35, saturation: 0.7, brightness: 0.9),
-                                        Color(hue: 0.38, saturation: 0.65, brightness: 0.72)
-                                    ]
-                                    : [
-                                        Color(hue: 0.58, saturation: 0.7, brightness: 1.0),
-                                        Color(hue: 0.62, saturation: 0.8, brightness: 0.85)
-                                    ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 56, height: 56)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(Color.white.opacity(0.5), lineWidth: 2)
-                        )
-                        .shadow(color: confirmHue.opacity(0.6), radius: isHoveringAdd ? 15 : 10, y: 3)
-                    
-                    Image(systemName: isEditing ? "checkmark" : "plus")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .scaleEffect(isHoveringAdd ? 1.08 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHoveringAdd)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isEditing ? "Done resizing" : "Add zone")
-            .help(isEditing ? "Keep this size" : "Add zone")
-            .position(x: frame.midX, y: frame.midY)
-            .onHover { hovering in
-                isHoveringAdd = hovering
-            }
 
-            if isEditing, let zoneNumber {
-                Text("Zone \(zoneNumber)")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color.black.opacity(0.45))
-                    )
-                    .position(x: frame.midX, y: frame.minY + 28)
-            } else if showsFirstZonePrompt, frame.width >= 210, frame.height >= 170 {
-                Text("Click + to place Zone 1")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundColor(.white.opacity(0.92))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color.black.opacity(0.55))
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
-                            )
-                    )
-                    .position(x: frame.midX, y: frame.minY + 26)
+            if let previewAxis = activeSplitPreview {
+                splitPreviewOverlay(for: previewAxis)
+                    .allowsHitTesting(false)
             }
+            
+            centerControlsCluster
+                .position(x: frame.midX, y: controlsCenterY)
             
             VStack(spacing: 2) {
                 Text("\(Int(frame.width)) × \(Int(frame.height))")
@@ -428,6 +870,7 @@ struct ResizableZoneWindow: View {
                             )
                     )
             }
+            .allowsHitTesting(false)
             .position(x: frame.midX, y: frame.maxY - 20)
             
             cornerHandle(at: .topLeft)
@@ -439,6 +882,163 @@ struct ResizableZoneWindow: View {
             edgeHandle(at: .bottom)
             edgeHandle(at: .left)
             edgeHandle(at: .right)
+        }
+    }
+
+    @ViewBuilder
+    private var centerControlsCluster: some View {
+        if stacksActionsBelowConfirm {
+            VStack(spacing: 8) {
+                topStatusBadge
+                confirmButton
+                if hasSecondaryActions {
+                    secondaryActionsRow(showSplitLabel: frame.width >= 150)
+                }
+            }
+        } else {
+            HStack(spacing: frame.width < 140 ? 6 : 10) {
+                confirmButton
+                if hasSecondaryActions {
+                    secondaryActionsRow(showSplitLabel: frame.width >= 260)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var topStatusBadge: some View {
+        if isEditing, let zoneNumber {
+            Text("Zone \(zoneNumber)")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.45))
+                )
+        } else if showsFirstZonePrompt, frame.width >= 210, frame.height >= 200 {
+            Text("Click ✓ to place Zone 1")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundColor(.white.opacity(0.92))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.55))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
+                        )
+                )
+        }
+    }
+
+    // Place a new zone and finish the draft, or keep the resize of one already placed
+    private var confirmButton: some View {
+        let diameter = confirmButtonDiameter
+        let iconSize: CGFloat = diameter < 50 ? 22 : 26
+        return Button(action: onConfirm) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: isEditing
+                                ? [
+                                    Color(hue: 0.35, saturation: 0.7, brightness: 0.9),
+                                    Color(hue: 0.38, saturation: 0.65, brightness: 0.72)
+                                ]
+                                : [
+                                    Color(hue: 0.58, saturation: 0.7, brightness: 1.0),
+                                    Color(hue: 0.62, saturation: 0.8, brightness: 0.85)
+                                ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: diameter, height: diameter)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.5), lineWidth: 2)
+                    )
+                    .shadow(color: confirmHue.opacity(0.6), radius: isHoveringAdd ? 15 : 10, y: 3)
+                
+                Image(systemName: "checkmark")
+                    .font(.system(size: iconSize, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            .contentShape(Circle())
+            .background(
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                confirmHue.opacity(isHoveringAdd ? 0.4 : 0.2),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 20,
+                            endRadius: 45
+                        )
+                    )
+                    .frame(width: 90, height: 90)
+                    .allowsHitTesting(false)
+            )
+            .scaleEffect(isHoveringAdd ? 1.08 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHoveringAdd)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isEditing ? "Done resizing" : "Place zone")
+        .help(isEditing ? "Keep this size" : "Place zone")
+        .onHover { hovering in
+            isHoveringAdd = hovering
+        }
+    }
+
+    @ViewBuilder
+    private func secondaryActionsRow(showSplitLabel: Bool) -> some View {
+        HStack(spacing: 6) {
+            if hasSplitActions, let onSplit {
+                HStack(spacing: 4) {
+                    if showSplitLabel {
+                        Text("Split")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.82))
+                            .padding(.leading, 6)
+                            .padding(.trailing, 2)
+                    }
+
+                    if canSplitVertically {
+                        splitButton(
+                            axis: .vertical,
+                            systemImage: "rectangle.split.2x1",
+                            accessibilityLabel: "Split zone vertically",
+                            helpText: "Split into left and right halves",
+                            onSplit: onSplit
+                        )
+                    }
+
+                    if canSplitHorizontally {
+                        splitButton(
+                            axis: .horizontal,
+                            systemImage: "rectangle.split.1x2",
+                            accessibilityLabel: "Split zone horizontally",
+                            helpText: "Split into top and bottom halves",
+                            onSplit: onSplit
+                        )
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.62))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.75)
+                        )
+                )
+            }
 
             if let onDelete {
                 Button(action: onDelete) {
@@ -447,12 +1047,90 @@ struct ResizableZoneWindow: View {
                         .foregroundColor(.white)
                         .frame(width: 28, height: 28)
                         .background(Circle().fill(Color.red.opacity(0.85)))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 0.75))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Delete zone")
                 .help("Delete zone")
-                .position(x: frame.maxX - 28, y: frame.minY + 28)
+            } else if let onDismissDraft {
+                Button(action: onDismissDraft) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white.opacity(0.9))
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Color.black.opacity(0.62)))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.28), lineWidth: 0.75))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel new zone")
+                .help("Close without adding a zone")
             }
+        }
+    }
+
+    private func splitButton(
+        axis: ZoneSplitAxis,
+        systemImage: String,
+        accessibilityLabel: String,
+        helpText: String,
+        onSplit: @escaping (ZoneSplitAxis) -> Void
+    ) -> some View {
+        let isHovered = hoveredSplitAxis == axis
+        return Button {
+            hoveredSplitAxis = nil
+            onSplit(axis)
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 28, height: 24)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(isHovered ? 0.28 : 0.1))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .help(helpText)
+        .onHover { hovering in
+            if hovering {
+                hoveredSplitAxis = axis
+            } else if hoveredSplitAxis == axis {
+                hoveredSplitAxis = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func splitPreviewOverlay(for axis: ZoneSplitAxis) -> some View {
+        ZStack {
+            // Subtle highlight on the half that will be placed first
+            let highlightWidth = axis == .vertical ? frame.width / 2 : frame.width
+            let highlightHeight = axis == .horizontal ? frame.height / 2 : frame.height
+            let highlightCenter = axis == .vertical
+                ? CGPoint(x: frame.minX + frame.width / 4, y: frame.midY)
+                : CGPoint(x: frame.midX, y: frame.minY + frame.height / 4)
+
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(0.08))
+                .frame(width: max(0, highlightWidth - 6), height: max(0, highlightHeight - 6))
+                .position(highlightCenter)
+
+            Path { path in
+                switch axis {
+                case .vertical:
+                    path.move(to: CGPoint(x: frame.midX, y: frame.minY + 8))
+                    path.addLine(to: CGPoint(x: frame.midX, y: frame.maxY - 8))
+                case .horizontal:
+                    path.move(to: CGPoint(x: frame.minX + 8, y: frame.midY))
+                    path.addLine(to: CGPoint(x: frame.maxX - 8, y: frame.midY))
+                }
+            }
+            .stroke(
+                Color.white.opacity(0.95),
+                style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [7, 5])
+            )
+            .shadow(color: Color(hue: 0.58, saturation: 0.9, brightness: 1.0).opacity(0.8), radius: 5)
         }
     }
 
@@ -470,20 +1148,29 @@ struct ResizableZoneWindow: View {
             .onChanged { value in
                 if dragStartFrame == nil {
                     dragStartFrame = frame
+                    hoveredSplitAxis = nil
                 }
                 
                 guard let startFrame = dragStartFrame else { return }
                 
-                let newX = startFrame.origin.x + value.translation.width
-                let newY = startFrame.origin.y + value.translation.height
-                
-                let clampedX = max(0, min(newX, containerSize.width - frame.width))
-                let clampedY = max(0, min(newY, containerSize.height - frame.height))
-                
-                frame.origin = CGPoint(x: clampedX, y: clampedY)
+                let rawFrame = CGRect(
+                    x: startFrame.origin.x + value.translation.width,
+                    y: startFrame.origin.y + value.translation.height,
+                    width: startFrame.width,
+                    height: startFrame.height
+                )
+                let snapped = ZoneEditorGeometry.snapMovedFrame(
+                    rawFrame,
+                    containerSize: containerSize,
+                    otherFrames: otherZoneFrames,
+                    enabled: isSnappingEnabled
+                )
+                frame = snapped.frame
+                activeGuides = snapped.guides
             }
             .onEnded { _ in
                 dragStartFrame = nil
+                activeGuides = []
             }
     }
     
@@ -523,6 +1210,7 @@ struct ResizableZoneWindow: View {
                 }
                 .onEnded { _ in
                     dragStartFrame = nil
+                    activeGuides = []
                 }
         )
     }
@@ -538,6 +1226,7 @@ struct ResizableZoneWindow: View {
     
     private func resizeFromCorner(_ corner: Corner, startFrame: CGRect, translation: CGSize) {
         var newFrame = startFrame
+        let activeEdges: Set<Edge>
         
         switch corner {
         case .topLeft:
@@ -545,22 +1234,34 @@ struct ResizableZoneWindow: View {
             newFrame.origin.y = startFrame.origin.y + translation.height
             newFrame.size.width = startFrame.width - translation.width
             newFrame.size.height = startFrame.height - translation.height
+            activeEdges = [.top, .left]
         case .topRight:
             newFrame.origin.y = startFrame.origin.y + translation.height
             newFrame.size.width = startFrame.width + translation.width
             newFrame.size.height = startFrame.height - translation.height
+            activeEdges = [.top, .right]
         case .bottomLeft:
             newFrame.origin.x = startFrame.origin.x + translation.width
             newFrame.size.width = startFrame.width - translation.width
             newFrame.size.height = startFrame.height + translation.height
+            activeEdges = [.bottom, .left]
         case .bottomRight:
             newFrame.size.width = startFrame.width + translation.width
             newFrame.size.height = startFrame.height + translation.height
+            activeEdges = [.bottom, .right]
         }
-        newFrame = Self.clamped(newFrame, to: containerSize)
+        let snapped = ZoneEditorGeometry.snapResizedFrame(
+            newFrame,
+            edges: activeEdges,
+            minSize: minSize,
+            containerSize: containerSize,
+            otherFrames: otherZoneFrames,
+            enabled: isSnappingEnabled
+        )
         
-        if newFrame.width >= minSize && newFrame.height >= minSize {
-            frame = newFrame
+        if snapped.frame.width >= minSize && snapped.frame.height >= minSize {
+            frame = snapped.frame
+            activeGuides = snapped.guides
         }
     }
     
@@ -609,6 +1310,7 @@ struct ResizableZoneWindow: View {
                 }
                 .onEnded { _ in
                     dragStartFrame = nil
+                    activeGuides = []
                 }
         )
     }
@@ -644,11 +1346,71 @@ struct ResizableZoneWindow: View {
         case .right:
             newFrame.size.width = startFrame.width + translation.width
         }
-        newFrame = Self.clamped(newFrame, to: containerSize)
+        let snapped = ZoneEditorGeometry.snapResizedFrame(
+            newFrame,
+            edges: [edge],
+            minSize: minSize,
+            containerSize: containerSize,
+            otherFrames: otherZoneFrames,
+            enabled: isSnappingEnabled
+        )
         
-        if newFrame.width >= minSize && newFrame.height >= minSize {
-            frame = newFrame
+        if snapped.frame.width >= minSize && snapped.frame.height >= minSize {
+            frame = snapped.frame
+            activeGuides = snapped.guides
         }
+    }
+}
+
+private struct SnapGuidesOverlay: View {
+    let guides: [ZoneSnapGuide]
+    let size: CGSize
+
+    var body: some View {
+        ZStack {
+            Canvas { context, canvasSize in
+                for guide in guides {
+                    let isFraction: Bool
+                    if case .fraction = guide.kind { isFraction = true } else { isFraction = false }
+                    let color: Color = isFraction
+                        ? Color(hue: 0.12, saturation: 0.85, brightness: 1.0).opacity(0.9)
+                        : Color(hue: 0.56, saturation: 0.85, brightness: 1.0).opacity(0.95)
+                    let style = StrokeStyle(lineWidth: 1.25, dash: isFraction ? [6, 4] : [])
+                    let path = Path { p in
+                        switch guide.axis {
+                        case .vertical:
+                            let x = max(0.75, min(guide.position, canvasSize.width - 0.75))
+                            p.move(to: CGPoint(x: x, y: 0))
+                            p.addLine(to: CGPoint(x: x, y: canvasSize.height))
+                        case .horizontal:
+                            let y = max(0.75, min(guide.position, canvasSize.height - 0.75))
+                            p.move(to: CGPoint(x: 0, y: y))
+                            p.addLine(to: CGPoint(x: canvasSize.width, y: y))
+                        }
+                    }
+                    context.stroke(path, with: .color(color), style: style)
+                }
+            }
+
+            ForEach(Array(guides.enumerated()), id: \.offset) { _, guide in
+                if case .fraction(let label) = guide.kind {
+                    Text(label)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundColor(.black.opacity(0.88))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(Color(hue: 0.12, saturation: 0.85, brightness: 1.0).opacity(0.95))
+                        )
+                        .position(
+                            x: guide.axis == .vertical ? max(24, min(guide.position, size.width - 24)) : 28,
+                            y: guide.axis == .horizontal ? max(20, min(guide.position, size.height - 20)) : 84
+                        )
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
     }
 }
 
@@ -828,6 +1590,7 @@ struct ZoneCreatorToolbar: View {
 struct ZoneCreatorView_Previews: PreviewProvider {
     struct PreviewWrapper: View {
         @State private var zones: [Zone] = []
+        @State private var isShowingDraft = true
         
         var body: some View {
             ZStack {
@@ -843,6 +1606,7 @@ struct ZoneCreatorView_Previews: PreviewProvider {
                 ZoneCreatorView(
                     screenSize: CGSize(width: 800, height: 600),
                     zones: $zones,
+                    isShowingDraft: $isShowingDraft,
                     onZoneCreated: { zone in
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
                             zones.append(zone)
