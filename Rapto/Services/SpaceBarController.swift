@@ -21,7 +21,7 @@ private let logger = Logger(subsystem: "app.rapto.mac", category: "SpaceBar")
 
 /// Electron apps such as HEY do not answer `_AXWindowID`, but this works for them.
 @_silgen_name("_AXUIElementGetWindow")
-private func SpaceBarAXGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
+private nonisolated func SpaceBarAXGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
 
 @_silgen_name("GetProcessForPID")
 private func SpaceBarGetProcessForPID(_ pid: pid_t, _ psn: UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
@@ -903,6 +903,107 @@ final class SpaceBarController: ObservableObject {
     private nonisolated static let quickAXTimeout: Float = 0.15
     private nonisolated static let wakeAXTimeout: Float = 0.35
 
+    private nonisolated final class WakeProbeCancelToken: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+    }
+
+    private nonisolated struct SendableAXElement: @unchecked Sendable {
+        let value: AXUIElement
+    }
+
+    private var moveWakeGeneration = 0
+    private var wakeProbeCancel: WakeProbeCancelToken?
+    private var wakingAXWindow: AXUIElement?
+    private var isWaitingForAXWake = false
+
+    private func cancelBackgroundAXWakeProbe() {
+        moveWakeGeneration += 1
+        wakeProbeCancel?.cancel()
+        wakeProbeCancel = nil
+        wakingAXWindow = nil
+        isWaitingForAXWake = false
+    }
+
+    /// Polls Accessibility off the main thread for an app whose initial AX lookup timed out
+    /// (such as a Mac Catalyst app finishing its background-to-foreground scene wake), raising
+    /// the exact window as soon as the app answers without ever stalling Rapto's main thread.
+    private func startBackgroundAXWakeProbe(
+        window: SpaceBarWindowRef,
+        started: Date,
+        deadline: Date
+    ) {
+        let generation = moveWakeGeneration
+        let cancelToken = WakeProbeCancelToken()
+        wakeProbeCancel = cancelToken
+        let pid = window.pid
+        let windowID = window.windowID
+        let ownerName = window.ownerName
+        let probeTimeout = Self.wakeAXTimeout
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let application = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(application, probeTimeout)
+
+            while !cancelToken.isCancelled && Date() < deadline {
+                var windowsRef: CFTypeRef?
+                let attemptStarted = CFAbsoluteTimeGetCurrent()
+                let result = AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windowsRef)
+                let waited = CFAbsoluteTimeGetCurrent() - attemptStarted
+                let matched = (result == .success)
+                    ? (windowsRef as? [AXUIElement]).flatMap { Self.matchingAXWindow(windowID: windowID, in: $0) }
+                    : nil
+                let outcome = DesktopMoveGrabPlanner.classifyQuickAXProbe(
+                    error: result,
+                    waited: waited,
+                    timeout: TimeInterval(probeTimeout),
+                    foundWindow: matched != nil
+                )
+                if outcome != .waking {
+                    let wrapped = matched.map(SendableAXElement.init)
+                    let succeeded = (result == .success)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.moveWakeGeneration == generation else { return }
+                        if succeeded {
+                            AppResponsiveness.shared.noteResponded(pid)
+                        }
+                        self.isWaitingForAXWake = false
+                        self.wakeProbeCancel = nil
+                        if let axWin = wrapped?.value {
+                            self.wakingAXWindow = axWin
+                            let elapsed = Date().timeIntervalSince(started)
+                            logger.notice("Move: \(ownerName, privacy: .public) window \(windowID) woke after \(String(format: "%.2f", elapsed), privacy: .public)s")
+                            AXUIElementPerformAction(axWin, kAXRaiseAction as CFString)
+                            let appElement = AXUIElementCreateApplication(pid)
+                            AXUIElementSetMessagingTimeout(appElement, Self.quickAXTimeout)
+                            AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+                        }
+                    }
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.moveWakeGeneration == generation else { return }
+                self.isWaitingForAXWake = false
+                self.wakeProbeCancel = nil
+            }
+        }
+    }
+
     /// Sends a lightweight off-main-thread Accessibility ping to wake an App-Napped process while
     /// macOS switches to its desktop, adding zero latency to already-awake apps.
     private func preWakeApp(pid: pid_t) {
@@ -934,18 +1035,22 @@ final class SpaceBarController: ObservableObject {
             NSSound.beep()
             return
         }
+        cancelBackgroundAXWakeProbe()
         let cgFrame = cgWindowFrame(windowID: window.windowID)
-        // Mark the move active BEFORE waking/focusing the target window so WindowHighlightService
-        // and drag watchers stand down and never block the main thread classifying an App-Napped app.
+        // Mark the move active BEFORE waking/focusing the target window so WindowHighlightService,
+        // SettingsWindowDetector, WindowUsageTracker and drag watchers stand down and never block
+        // the main thread querying an App-Napped app mid-move.
         isMovingWindow = true
         Self.isDrivingMouse = true
         Self.movingWindowID = window.windowID
 
         // Wake and bring the target window forward via LaunchServices + WindowServer BEFORE asking
-        // Accessibility, so an App-Napped window (even buried behind a slot group) rises immediately.
+        // Accessibility, so an App-Napped window (even buried behind a slot group) starts waking at once.
         focusViaWindowServer(pid: window.pid, windowID: window.windowID)
 
-        let axWin = quickAXWindow(pid: window.pid, windowID: window.windowID, timeout: Self.quickAXTimeout)
+        let started = Date()
+        let axProbe = quickAXWindowProbe(pid: window.pid, windowID: window.windowID, timeout: Self.quickAXTimeout)
+        let axWin = axProbe.element
         let initialFrame = axWin.flatMap { frame(of: $0) } ?? cgFrame
         guard let initialFrame else {
             logger.notice("Move: no accessibility or Core Graphics window for \(window.windowID)")
@@ -956,19 +1061,26 @@ final class SpaceBarController: ObservableObject {
         if let source = keys.source {
             onWillMoveWindow?(window.windowID, source, displayID)
         }
+        let raiseDuration = DesktopMoveGrabPlanner.raiseDeadlineDuration(axOutcome: axProbe.outcome)
+        let raiseDeadline = Date().addingTimeInterval(raiseDuration)
         if let axWin {
             AXUIElementPerformAction(axWin, kAXRaiseAction as CFString)
             let appElement = AXUIElementCreateApplication(window.pid)
             AXUIElementSetMessagingTimeout(appElement, Self.quickAXTimeout)
             AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        } else if axProbe.outcome == .waking {
+            isWaitingForAXWake = true
+            logger.notice("Move: \(window.ownerName, privacy: .public) window \(window.windowID) AX not ready within \(Self.quickAXTimeout, privacy: .public)s, waiting up to \(raiseDuration, privacy: .public)s for app wake")
+            startBackgroundAXWakeProbe(window: window, started: started, deadline: raiseDeadline)
         } else {
-            logger.notice("Move: \(window.ownerName, privacy: .public) window \(window.windowID) AX not ready within \(Self.quickAXTimeout, privacy: .public)s, using Core Graphics fallback")
+            logger.notice("Move: \(window.ownerName, privacy: .public) window \(window.windowID) has no AX window, using Core Graphics fallback")
         }
         grabWhenRaised(window, axWindow: axWin, frame: initialFrame, to: targetID, displayID: displayID, home: home,
-                       targetKey: keys.target, deadline: Date().addingTimeInterval(1.0), started: Date())
+                       targetKey: keys.target, deadline: raiseDeadline, started: started)
     }
 
     private func endDrivingMouse() {
+        cancelBackgroundAXWakeProbe()
         isMovingWindow = false
         Self.isDrivingMouse = false
         Self.movingWindowID = nil
@@ -979,9 +1091,10 @@ final class SpaceBarController: ObservableObject {
     private func grabWhenRaised(
         _ window: SpaceBarWindowRef, axWindow: AXUIElement?, frame: CGRect,
         to targetID: UInt64, displayID: String, home: UInt64?, targetKey: String?,
-        deadline: Date, started: Date = Date(), didNudgeRaise: Bool = false, didRetrySlowAX: Bool = false
+        deadline: Date, started: Date = Date(), completedNudges: Int = 0, didRetrySlowAX: Bool = false
     ) {
-        let liveFrame = axWindow.flatMap { self.frame(of: $0) } ?? cgWindowFrame(windowID: window.windowID) ?? frame
+        let effectiveAX = axWindow ?? wakingAXWindow
+        let liveFrame = effectiveAX.flatMap { self.frame(of: $0) } ?? cgWindowFrame(windowID: window.windowID) ?? frame
         let windows = SpaceBarController.windowsFrontToBack()
         // Until the window is in front, spots are answered by whatever covers it. Checking three
         // points along the top strip avoids stalling when a small floating window sits over midX.
@@ -989,22 +1102,31 @@ final class SpaceBarController: ObservableObject {
         let isOnTop = !raisePoints.isEmpty && raisePoints.contains {
             SpaceBarController.windowIsOnTop(pid: window.pid, at: $0, among: windows)
         }
-        if Date() < deadline, !isOnTop {
-            var nudged = didNudgeRaise
-            if !nudged, Date().timeIntervalSince(started) >= 0.25 {
-                nudged = true
+        if DesktopMoveGrabPlanner.shouldWaitBeforeGrab(
+            isOnTop: isOnTop,
+            waitingForWake: isWaitingForAXWake,
+            beforeDeadline: Date() < deadline
+        ) {
+            var nudges = completedNudges
+            if !isOnTop,
+               DesktopMoveGrabPlanner.nextRaiseNudgeIndex(
+                   elapsed: Date().timeIntervalSince(started),
+                   completedNudges: nudges
+               ) != nil {
+                nudges += 1
                 focusViaWindowServer(pid: window.pid, windowID: window.windowID)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
-                self?.grabWhenRaised(window, axWindow: axWindow, frame: liveFrame, to: targetID,
+                self?.grabWhenRaised(window, axWindow: effectiveAX, frame: liveFrame, to: targetID,
                                      displayID: displayID, home: home, targetKey: targetKey,
-                                     deadline: deadline, started: started, didNudgeRaise: nudged,
+                                     deadline: deadline, started: started, completedNudges: nudges,
                                      didRetrySlowAX: didRetrySlowAX)
             }
             return
         }
-        // If AX wasn't ready at beginMove, check once quickly (50 ms) now that the window is raised.
-        let resolvedAX = axWindow ?? quickAXWindow(pid: window.pid, windowID: window.windowID, timeout: 0.05)
+        cancelBackgroundAXWakeProbe()
+        // If AX wasn't ready at beginMove and the window is now on top, check once quickly.
+        let resolvedAX = effectiveAX ?? (isOnTop ? quickAXWindow(pid: window.pid, windowID: window.windowID, timeout: Self.quickAXTimeout) : nil)
         let appKey = appIdentityKey(for: window)
         let button = resolvedAX.flatMap { titleBarButtonFrame(of: $0) }
         let outcome: GrabPlanOutcome
@@ -1026,7 +1148,7 @@ final class SpaceBarController: ObservableObject {
                 self?.grabWhenRaised(window, axWindow: resolvedAX, frame: liveFrame, to: targetID,
                                      displayID: displayID, home: home, targetKey: targetKey,
                                      deadline: max(deadline, Date().addingTimeInterval(0.2)),
-                                     started: started, didNudgeRaise: didNudgeRaise,
+                                     started: started, completedNudges: completedNudges,
                                      didRetrySlowAX: true)
             }
             return
@@ -1035,7 +1157,7 @@ final class SpaceBarController: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
                     self?.grabWhenRaised(window, axWindow: resolvedAX, frame: liveFrame, to: targetID,
                                          displayID: displayID, home: home, targetKey: targetKey,
-                                         deadline: deadline, started: started, didNudgeRaise: didNudgeRaise,
+                                         deadline: deadline, started: started, completedNudges: completedNudges,
                                          didRetrySlowAX: didRetrySlowAX)
                 }
                 return
@@ -2197,15 +2319,35 @@ final class SpaceBarController: ObservableObject {
 
     /// Non-banning AX window lookup with a short per-element timeout so an App-Napped app waking up
     /// on another desktop does not stall the move for 1 s or get flagged as hung.
-    private func quickAXWindow(pid: pid_t, windowID: UInt32, timeout: Float = quickAXTimeout) -> AXUIElement? {
-        guard !AppResponsiveness.shared.notRespondingPIDs.contains(pid) else { return nil }
+    private func quickAXWindowProbe(
+        pid: pid_t, windowID: UInt32, timeout: Float = quickAXTimeout
+    ) -> (element: AXUIElement?, outcome: DesktopMoveAXProbeOutcome) {
+        guard !AppResponsiveness.shared.notRespondingPIDs.contains(pid) else {
+            return (nil, .unavailable)
+        }
         let application = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(application, timeout)
         var windowsRef: CFTypeRef?
+        let started = CFAbsoluteTimeGetCurrent()
         let result = AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windowsRef)
-        guard result == .success, let windows = windowsRef as? [AXUIElement] else { return nil }
-        AppResponsiveness.shared.noteResponded(pid)
-        return matchingAXWindow(windowID: windowID, in: windows)
+        let waited = CFAbsoluteTimeGetCurrent() - started
+        let matched = (result == .success)
+            ? (windowsRef as? [AXUIElement]).flatMap { Self.matchingAXWindow(windowID: windowID, in: $0) }
+            : nil
+        if result == .success {
+            AppResponsiveness.shared.noteResponded(pid)
+        }
+        let outcome = DesktopMoveGrabPlanner.classifyQuickAXProbe(
+            error: result,
+            waited: waited,
+            timeout: TimeInterval(timeout),
+            foundWindow: matched != nil
+        )
+        return (matched, outcome)
+    }
+
+    private func quickAXWindow(pid: pid_t, windowID: UInt32, timeout: Float = quickAXTimeout) -> AXUIElement? {
+        quickAXWindowProbe(pid: pid, windowID: windowID, timeout: timeout).element
     }
 
     private func axWindow(pid: pid_t, windowID: UInt32) -> AXUIElement? {
@@ -2216,10 +2358,10 @@ final class SpaceBarController: ObservableObject {
             AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windowsRef)
         }
         guard result == .success, let windows = windowsRef as? [AXUIElement] else { return nil }
-        return matchingAXWindow(windowID: windowID, in: windows)
+        return Self.matchingAXWindow(windowID: windowID, in: windows)
     }
 
-    private func matchingAXWindow(windowID: UInt32, in windows: [AXUIElement]) -> AXUIElement? {
+    private nonisolated static func matchingAXWindow(windowID: UInt32, in windows: [AXUIElement]) -> AXUIElement? {
         for window in windows {
             var id: CGWindowID = 0
             if SpaceBarAXGetWindow(window, &id) == .success {

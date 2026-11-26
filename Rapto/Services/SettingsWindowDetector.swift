@@ -27,6 +27,7 @@ final class SettingsWindowDetector {
     private var settingsMenuItemHighlighted: [pid_t: Bool] = [:]
     private var keyMonitor: Any?
     private var activationObserver: Any?
+    private var spaceBarMoveEndObserver: Any?
     /// Menu observer of the frontmost app only; it moves with the app focus
     private var menuObserver: AXObserver?
     private var menuObserverPID: pid_t = 0
@@ -44,8 +45,19 @@ final class SettingsWindowDetector {
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            self?.observeMenus(of: app)
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            Task { @MainActor [weak self] in
+                guard let app else { return }
+                self?.observeMenus(of: app)
+            }
+        }
+        spaceBarMoveEndObserver = NotificationCenter.default.addObserver(
+            forName: .spaceBarMoveDidEnd, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let app = NSWorkspace.shared.frontmostApplication else { return }
+                self?.observeMenus(of: app)
+            }
         }
         if let app = NSWorkspace.shared.frontmostApplication {
             observeMenus(of: app)
@@ -53,6 +65,9 @@ final class SettingsWindowDetector {
     }
     
     private func observeMenus(of app: NSRunningApplication) {
+        // Stand down while the Desktops Bar wakes and carries a window between Spaces so
+        // attaching a menu AXObserver never blocks the main thread for 1 s on a waking app.
+        guard !SpaceBarController.isDrivingMouse else { return }
         let pid = app.processIdentifier
         guard pid != menuObserverPID else { return }
         if let old = menuObserver {

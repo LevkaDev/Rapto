@@ -392,7 +392,7 @@ extension AppState {
             
             // Start auto-tiling but ALWAYS skip initial redistribute during Space transition
             // This prevents incorrect layout due to incomplete window enumeration
-            autoTilingService?.startDynamic(forScreenID: screenID, skipInitialRedistribute: true)
+            autoTilingService?.startDynamic(forScreenID: screenID, skipInitialRedistribute: true, savedSpaceID: currentSpaceID)
             
             // Redistribute after the Space transition animation completes.
             // savedSpaceID restores the window order from the saved layout, so windows keep their slots on the first return to the Space.

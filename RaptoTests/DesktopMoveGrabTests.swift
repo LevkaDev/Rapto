@@ -5,6 +5,7 @@
 //  Where the Desktops Bar takes hold of a window to move it to another desktop.
 //
 
+import ApplicationServices
 import CoreGraphics
 import Testing
 @testable import Rapto
@@ -463,5 +464,67 @@ struct DesktopMoveGrabTests {
         let spots = DesktopMoveGrabPlanner.cgFallbackSpots(in: narrow, limit: 4)
         #expect(!spots.isEmpty)
         #expect(spots.allSatisfy { narrow.contains($0) })
+    }
+
+    @Test("Quick AX probe distinguishes waking App-Napped apps from awake non-AX apps")
+    func classifyQuickAXProbeSeparatesWakingFromUnavailable() {
+        #expect(
+            DesktopMoveGrabPlanner.classifyQuickAXProbe(
+                error: .success, waited: 0.004, timeout: 0.15, foundWindow: true
+            ) == .ready
+        )
+        // Catalyst / App-Napped app stalls for the full short timeout -> waking
+        #expect(
+            DesktopMoveGrabPlanner.classifyQuickAXProbe(
+                error: .cannotComplete, waited: 0.15, timeout: 0.15, foundWindow: false
+            ) == .waking
+        )
+        #expect(
+            DesktopMoveGrabPlanner.classifyQuickAXProbe(
+                error: .cannotComplete, waited: 0.13, timeout: 0.15, foundWindow: false
+            ) == .waking
+        )
+        // Awake non-AX app answers right away with empty windows or unsupported -> unavailable (no wait)
+        #expect(
+            DesktopMoveGrabPlanner.classifyQuickAXProbe(
+                error: .success, waited: 0.003, timeout: 0.15, foundWindow: false
+            ) == .unavailable
+        )
+        #expect(
+            DesktopMoveGrabPlanner.classifyQuickAXProbe(
+                error: .cannotComplete, waited: 0.002, timeout: 0.15, foundWindow: false
+            ) == .unavailable
+        )
+        #expect(
+            DesktopMoveGrabPlanner.classifyQuickAXProbe(
+                error: .attributeUnsupported, waited: 0.002, timeout: 0.15, foundWindow: false
+            ) == .unavailable
+        )
+    }
+
+    @Test("Waking apps get an extended raise budget and periodic nudges while awake apps add zero delay")
+    func wakeDeadlineNudgesAndWaitDecisions() {
+        #expect(DesktopMoveGrabPlanner.raiseDeadlineDuration(axOutcome: .ready) == DesktopMoveGrabPlanner.normalRaiseDeadline)
+        #expect(DesktopMoveGrabPlanner.raiseDeadlineDuration(axOutcome: .unavailable) == DesktopMoveGrabPlanner.normalRaiseDeadline)
+        #expect(DesktopMoveGrabPlanner.raiseDeadlineDuration(axOutcome: .waking) == DesktopMoveGrabPlanner.wakingRaiseDeadline)
+        #expect(DesktopMoveGrabPlanner.wakingRaiseDeadline >= 2.5)
+
+        // Awake app already on top proceeds immediately
+        #expect(!DesktopMoveGrabPlanner.shouldWaitBeforeGrab(isOnTop: true, waitingForWake: false, beforeDeadline: true))
+        // Buried window waits until raised
+        #expect(DesktopMoveGrabPlanner.shouldWaitBeforeGrab(isOnTop: false, waitingForWake: false, beforeDeadline: true))
+        // Waking Catalyst app already on top still waits for its main thread to answer AX
+        #expect(DesktopMoveGrabPlanner.shouldWaitBeforeGrab(isOnTop: true, waitingForWake: true, beforeDeadline: true))
+        // Expired deadline always stops waiting so fallback or clean abort runs
+        #expect(!DesktopMoveGrabPlanner.shouldWaitBeforeGrab(isOnTop: false, waitingForWake: true, beforeDeadline: false))
+        #expect(!DesktopMoveGrabPlanner.shouldWaitBeforeGrab(isOnTop: true, waitingForWake: true, beforeDeadline: false))
+
+        // Periodic raise nudges fire along the wake window without repeating an already-sent nudge
+        #expect(DesktopMoveGrabPlanner.nextRaiseNudgeIndex(elapsed: 0.10, completedNudges: 0) == nil)
+        #expect(DesktopMoveGrabPlanner.nextRaiseNudgeIndex(elapsed: 0.25, completedNudges: 0) == 0)
+        #expect(DesktopMoveGrabPlanner.nextRaiseNudgeIndex(elapsed: 0.40, completedNudges: 1) == nil)
+        #expect(DesktopMoveGrabPlanner.nextRaiseNudgeIndex(elapsed: 0.85, completedNudges: 1) == 1)
+        #expect(DesktopMoveGrabPlanner.nextRaiseNudgeIndex(elapsed: 2.30, completedNudges: 3) == 3)
+        #expect(DesktopMoveGrabPlanner.nextRaiseNudgeIndex(elapsed: 2.80, completedNudges: 4) == nil)
     }
 }
