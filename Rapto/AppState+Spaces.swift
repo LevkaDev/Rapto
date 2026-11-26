@@ -150,6 +150,10 @@ extension AppState {
             self.focusModeService?.returnPendingWindows()
             self.floatingWindowService?.returnPendingWindows()
             self.groupIndicatorManager?.updateIndicators()
+            if let settledScreen = self.screenManager.screen(forDisplayID: displayID) {
+                self.maybeShowSecondDesktopHint(on: settledScreen)
+                self.maybeShowWindowFlowOrWorkspacesHint(on: settledScreen)
+            }
         }
     }
 

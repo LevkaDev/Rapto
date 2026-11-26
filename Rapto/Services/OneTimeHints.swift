@@ -18,13 +18,46 @@ nonisolated enum HintID: String, CaseIterable, Hashable, Sendable {
     case groupBadge = "groupBadge"
     case focusMode = "focusMode"
     case notchDesktopsBar = "notchDesktopsBar"
+    case secondDesktopCreated = "secondDesktopCreated"
+    case manyWindowsFlow = "manyWindowsFlow"
+    case workspacesTip = "workspacesTip"
 
     /// Maximum displays before this hint retires automatically.
     var maxDisplays: Int {
         switch self {
-        case .notchDesktopsBar: return 2
-        default: return OneTimeHintScheduler.maxDisplays
+        case .notchDesktopsBar, .secondDesktopCreated, .manyWindowsFlow, .workspacesTip:
+            return 2
+        default:
+            return OneTimeHintScheduler.maxDisplays
         }
+    }
+}
+
+/// Pure eligibility rules for progressive discovery tips shown only when relevant,
+/// rather than crowding the first minute of onboarding.
+nonisolated enum ProgressiveDiscoveryPolicy {
+    static let workspacesMinimumAgeSeconds: TimeInterval = 48 * 3600
+
+    static func shouldSuggestDesktopsBar(desktopCount: Int, showsSpaceBar: Bool) -> Bool {
+        desktopCount >= 2 && showsSpaceBar
+    }
+
+    static func shouldSuggestWindowFlow(tilableWindowCount: Int) -> Bool {
+        tilableWindowCount >= 4
+    }
+
+    static func shouldSuggestWorkspaces(
+        distinctAppCount: Int,
+        savedWorkspaceCount: Int,
+        completedOnboardingAt: Date?,
+        now: Date = Date()
+    ) -> Bool {
+        guard savedWorkspaceCount == 0,
+              distinctAppCount >= 3,
+              let completedOnboardingAt else {
+            return false
+        }
+        return now.timeIntervalSince(completedOnboardingAt) >= workspacesMinimumAgeSeconds
     }
 }
 
@@ -203,6 +236,29 @@ enum OneTimeHintCopy {
         showsUpwardPointer: true
     )
 
+    nonisolated static let secondDesktopCreated = HintCardContent(
+        icon: "menubar.rectangle",
+        title: "Switch Desktops Faster",
+        detail: "Use the Desktops Bar to jump between desktops or drag apps across"
+    )
+
+    nonisolated static func manyWindowsFlow(shortcut: String?) -> HintCardContent {
+        let validShortcut = (shortcut?.isEmpty == false) ? shortcut : nil
+        let detail = validShortcut.map { "Press \($0) to flip through every window visually" }
+            ?? "Open Settings → Shortcuts to set a key for Window Flow"
+        return HintCardContent(
+            icon: "rectangle.stack.badge.play",
+            title: "Lots of Windows Open?",
+            detail: detail
+        )
+    }
+
+    nonisolated static let workspacesTip = HintCardContent(
+        icon: "square.stack.3d.up",
+        title: "Save This Setup as a Workspace",
+        detail: "Open the Rapto menu → Workspaces to reopen these apps in one click"
+    )
+
     nonisolated static func groupBadge(enableScroll: Bool, cycleShortcut: String?) -> HintCardContent {
         let detail: String
         switch (enableScroll, cycleShortcut) {
@@ -299,6 +355,10 @@ final class OneTimeHints {
     func reset() {
         panel.hide()
         scheduler.resetState()
+    }
+
+    func hasRemaining(_ id: HintID) -> Bool {
+        !scheduler.isExhausted(id)
     }
 
     func hideIfShowing(_ id: HintID) {

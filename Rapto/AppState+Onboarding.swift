@@ -52,13 +52,27 @@ extension AppState {
             && screenManager.allScreens().contains { spaceBarController.notchAnchor(on: $0) != nil }
     }
 
-    /// Number of regular macOS desktops currently on the active screen.
-    var desktopCountOnActiveScreen: Int {
-        let displayID = screenManager.displayIdentifier(for: screenManager.activeScreen())
+    /// Number of regular macOS desktops currently on `screen`.
+    func desktopCount(on screen: NSScreen) -> Int {
+        let displayID = screenManager.displayIdentifier(for: screen)
         if let display = spaceBarController.displays.first(where: { $0.id == displayID }) {
             return max(1, display.spaces.filter { !$0.isFullScreen }.count)
         }
         return 1
+    }
+
+    /// Number of regular macOS desktops currently on the active screen.
+    var desktopCountOnActiveScreen: Int {
+        desktopCount(on: screenManager.activeScreen())
+    }
+
+    /// Timestamp when onboarding was first completed on this Mac, or nil for older installs.
+    var firstOnboardingCompletedAt: Date? {
+        guard let timestamp = UserDefaults.standard.object(forKey: Self.firstOnboardingCompletedAtKey) as? Double,
+              timestamp > 0 else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: timestamp)
     }
 
     /// Movable, tilable windows currently visible on `screen` (including active tour sample windows).
@@ -310,6 +324,111 @@ extension AppState {
 
     func didRevealNotchDesktopsBar() {
         oneTimeHints.markCompleted(.notchDesktopsBar)
+    }
+
+    /// Progressive discovery: when a user switches across multiple desktops without having used the
+    /// Desktops Bar yet, briefly point out that the bar switches desktops and moves apps across them.
+    func maybeShowSecondDesktopHint(on screen: NSScreen) {
+        guard hasCompletedOnboarding,
+              !isOnboardingVisible,
+              !isInteractiveTourActive,
+              !isPaused,
+              showsHints,
+              oneTimeHints.hasRemaining(.secondDesktopCreated),
+              ProgressiveDiscoveryPolicy.shouldSuggestDesktopsBar(
+                  desktopCount: desktopCount(on: screen),
+                  showsSpaceBar: showsSpaceBar
+              ) else {
+            return
+        }
+        let screenID = screenManager.identifier(for: screen)
+        oneTimeHints.showOnce(
+            .secondDesktopCreated,
+            content: { OneTimeHintCopy.secondDesktopCreated },
+            placement: { [weak self] in
+                guard let self, let resolvedScreen = self.screenManager.screen(for: screenID) else { return nil }
+                return (.below(self.spaceBarController.barAnchor(on: resolvedScreen)), resolvedScreen)
+            },
+            stillValid: { [weak self] in
+                guard let self,
+                      !self.isOnboardingVisible,
+                      !self.isInteractiveTourActive,
+                      !self.isPaused,
+                      let resolvedScreen = self.screenManager.screen(for: screenID) else { return false }
+                return ProgressiveDiscoveryPolicy.shouldSuggestDesktopsBar(
+                    desktopCount: self.desktopCount(on: resolvedScreen),
+                    showsSpaceBar: self.showsSpaceBar
+                )
+            },
+            autoHideAfter: 8
+        )
+    }
+
+    /// Progressive discovery: introduces Window Flow once the screen gets busy (4+ windows) and
+    /// Workspaces after a couple of days once the user regularly keeps 3+ apps open together.
+    func maybeShowWindowFlowOrWorkspacesHint(on screen: NSScreen) {
+        guard hasCompletedOnboarding,
+              !isOnboardingVisible,
+              !isInteractiveTourActive,
+              !isPaused,
+              showsHints,
+              oneTimeHints.hasRemaining(.manyWindowsFlow) || oneTimeHints.hasRemaining(.workspacesTip) else {
+            return
+        }
+
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let realWindows = eligibleWindowsForFirstArrange(on: screen).filter { $0.ownerPID != ownPID }
+        let screenID = screenManager.identifier(for: screen)
+
+        if oneTimeHints.hasRemaining(.manyWindowsFlow),
+           ProgressiveDiscoveryPolicy.shouldSuggestWindowFlow(tilableWindowCount: realWindows.count) {
+            oneTimeHints.showOnce(
+                .manyWindowsFlow,
+                content: { [weak self] in
+                    OneTimeHintCopy.manyWindowsFlow(shortcut: self?.shortcutDisplayString(for: .openWindowFlow))
+                },
+                placement: { [weak self] in
+                    guard let self, let resolvedScreen = self.screenManager.screen(for: screenID) else { return nil }
+                    return (.below(self.spaceBarController.barAnchor(on: resolvedScreen)), resolvedScreen)
+                },
+                stillValid: { [weak self] in
+                    guard let self,
+                          !self.isOnboardingVisible,
+                          !self.isInteractiveTourActive,
+                          !self.isPaused,
+                          !self.isWindowFlowOpen else { return false }
+                    return true
+                },
+                autoHideAfter: 8
+            )
+            return
+        }
+
+        let distinctApps = Set(realWindows.map { $0.bundleIdentifier ?? $0.ownerName })
+        if oneTimeHints.hasRemaining(.workspacesTip),
+           ProgressiveDiscoveryPolicy.shouldSuggestWorkspaces(
+               distinctAppCount: distinctApps.count,
+               savedWorkspaceCount: workspaces.count,
+               completedOnboardingAt: firstOnboardingCompletedAt
+           ) {
+            oneTimeHints.showOnce(
+                .workspacesTip,
+                content: { OneTimeHintCopy.workspacesTip },
+                placement: { [weak self] in
+                    guard let self, let resolvedScreen = self.screenManager.screen(for: screenID) else { return nil }
+                    return (.below(self.spaceBarController.barAnchor(on: resolvedScreen)), resolvedScreen)
+                },
+                stillValid: { [weak self] in
+                    guard let self,
+                          !self.isOnboardingVisible,
+                          !self.isInteractiveTourActive,
+                          !self.isPaused,
+                          self.workspaces.isEmpty else { return false }
+                    return true
+                },
+                autoHideAfter: 8
+            )
+        }
     }
 
     /// Points to the notch on MacBooks where the Desktops Bar is hidden until hovered (max 2 times,

@@ -31,7 +31,7 @@ class AppState: ObservableObject {
         }
     }
 
-    private var isWindowFlowOpen: Bool = false
+    private(set) var isWindowFlowOpen: Bool = false
     var activeWindowFlowBinding: HotkeyBinding?
     
     @Published var selectedTemplate: GridTemplate?
@@ -638,7 +638,12 @@ class AppState: ObservableObject {
         ScreenIDMigration.run()
         return WorkspaceStorage.load()
     }() {
-        didSet { WorkspaceStorage.save(workspaces) }
+        didSet {
+            WorkspaceStorage.save(workspaces)
+            if !workspaces.isEmpty {
+                oneTimeHints.markCompleted(.workspacesTip)
+            }
+        }
     }
     
     // MARK: - Template Hotkeys
@@ -706,6 +711,9 @@ class AppState: ObservableObject {
         flow.onVisibilityChanged = { [weak self] visible in
             guard let self else { return }
             self.isWindowFlowOpen = visible
+            if visible {
+                self.oneTimeHints.markCompleted(.manyWindowsFlow)
+            }
             self.windowUsageTracker.isSuppressed = visible
             let suppress = visible || self.isOverlayVisible
             self.dragSnapService?.suppressMouseEvents = suppress
@@ -1058,6 +1066,16 @@ class AppState: ObservableObject {
         spaceBarController.onUserRevealedHoverBar = { [weak self] in
             self?.didRevealNotchDesktopsBar()
         }
+        spaceBarController.onUserUsedDesktopsBar = { [weak self] in
+            self?.oneTimeHints.markCompleted(.secondDesktopCreated)
+        }
+        NotificationCenter.default.publisher(for: .dragSnapDidSnap)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.maybeShowWindowFlowOrWorkspacesHint(on: self.screenManager.activeScreen())
+            }
+            .store(in: &cancellables)
         spaceBarController.start(enabled: showsSpaceBar)
         windowUsageTracker.start()
 

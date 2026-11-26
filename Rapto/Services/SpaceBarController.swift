@@ -228,6 +228,8 @@ final class SpaceBarController: ObservableObject {
     var menuBuilder: ((SpaceBarSpace, SpaceBarGlyph?, String) -> NSMenu?)?
     /// Fired when the user hovers the notch / top hover zone and reveals a hidden Desktops Bar.
     var onUserRevealedHoverBar: (() -> Void)?
+    /// Fired when the user interacts with the Desktops Bar (switches desktops, focuses an app, or moves a window).
+    var onUserUsedDesktopsBar: (() -> Void)?
     /// Whether a window moved from the pill takes the user along. Option on drop flips it.
     var movesFollowWindow = false
     /// Whether in-action hints (such as the live bar drag label) are shown.
@@ -399,6 +401,7 @@ final class SpaceBarController: ObservableObject {
 
     /// Switch to a desktop. A click on the number does not activate an app.
     func switchTo(spaceID: UInt64, displayID: String) {
+        onUserUsedDesktopsBar?()
         pendingAction = nil
         askForSwitchPermissionIfNeeded()
         startSwitch(spaceID: spaceID, displayID: displayID)
@@ -408,6 +411,7 @@ final class SpaceBarController: ObservableObject {
     /// first and activate the window only after that desktop is on screen.
     func focus(_ glyph: SpaceBarGlyph, on spaceID: UInt64, displayID: String) {
         guard !glyph.windows.isEmpty else { return }
+        onUserUsedDesktopsBar?()
         let key = "\(spaceID)-\(glyph.pid)"
         let index = cycleIndex[key] ?? 0
         let window = glyph.windows[index % glyph.windows.count]
@@ -440,6 +444,7 @@ final class SpaceBarController: ObservableObject {
     /// Move the app's front window on one desktop to another desktop. With `follow`,
     /// the user ends up on the target desktop. Otherwise they stay where they were.
     func move(_ glyph: SpaceBarGlyph, from sourceID: UInt64, to targetID: UInt64, displayID: String, follow: Bool) {
+        onUserUsedDesktopsBar?()
         let spaces = displays.first { $0.id == displayID }?.spaces ?? []
         move(glyph, from: sourceID, to: targetID, displayID: displayID, follow: follow, spaces: spaces)
     }
