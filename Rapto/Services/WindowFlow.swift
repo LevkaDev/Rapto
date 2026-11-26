@@ -494,7 +494,7 @@ final class WindowFlowController {
         }
     }
 
-    func toggle() {
+    func toggle(onDisplayID preferredDisplayID: String? = nil) {
         if let stripView {
             stripView.cancel()
             return
@@ -502,12 +502,12 @@ final class WindowFlowController {
         guard !isOpening else { return }
         isOpening = true
         Task {
-            await open()
+            await open(preferredDisplayID: preferredDisplayID)
             isOpening = false
         }
     }
 
-    private func open() async {
+    private func open(preferredDisplayID: String? = nil) async {
         let started = Date()
         let rawEntries = spaceBar.switcherWindows()
         guard !rawEntries.isEmpty else { return }
@@ -525,9 +525,10 @@ final class WindowFlowController {
         let heroID = heroPosition.map { entries[$0].id }
         debugLog("WindowFlow", "Focused window \(focusedID.map(String.init) ?? "unknown"), starting from \(heroPosition.map { entries[$0].appName } ?? "nothing")")
 
+        let preferredScreen = preferredDisplayID.flatMap { screenManager.screen(forDisplayID: $0) }
         let heroFrame = heroID.flatMap { bounds[$0] }
             .map { screenManager.convertFromCGCoordinates(frame: $0) }
-        let screen = heroFrame.flatMap { frame in
+        let screen = preferredScreen ?? heroFrame.flatMap { frame in
             NSScreen.screens.first { $0.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) }
         } ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         guard let screen else { return }

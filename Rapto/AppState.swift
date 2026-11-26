@@ -713,6 +713,7 @@ class AppState: ObservableObject {
         flow.onVisibilityChanged = { [weak self] visible in
             guard let self else { return }
             self.isWindowFlowOpen = visible
+            self.spaceBarController.isWindowFlowOpen = visible
             if visible {
                 self.oneTimeHints.markCompleted(.manyWindowsFlow)
                 NotificationCenter.default.post(name: .raptoTourDidOpenWindowFlow, object: nil)
@@ -1073,6 +1074,10 @@ class AppState: ObservableObject {
         spaceBarController.onUserUsedDesktopsBar = { [weak self] in
             self?.oneTimeHints.markCompleted(.secondDesktopCreated)
         }
+        spaceBarController.onWindowFlowClicked = { [weak self] displayID in
+            self?.windowFlow.toggle(onDisplayID: displayID)
+        }
+        spaceBarController.windowFlowShortcut = activeWindowFlowBinding?.displayString
         NotificationCenter.default.publisher(for: .dragSnapDidSnap)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in

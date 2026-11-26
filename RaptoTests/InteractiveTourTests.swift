@@ -113,10 +113,15 @@ struct InteractiveTourTests {
         #expect(model.completedCount == 4)
     }
 
-    @Test("Window Flow task detail embeds live shortcut when bound and falls back cleanly when cleared")
+    @Test("Window Flow task detail embeds live shortcut when bound and mentions the Desktops Bar button")
     func windowFlowTaskDetail() {
-        #expect(TourTaskID.openWindowFlow.detail(windowFlowShortcut: "⌃⌥S").contains("⌃⌥S"))
-        #expect(TourTaskID.openWindowFlow.detail(windowFlowShortcut: nil).contains("Click Open Window Flow"))
+        let withShortcut = TourTaskID.openWindowFlow.detail(windowFlowShortcut: "⌃⌥S")
+        #expect(withShortcut.contains("⌃⌥S"))
+        #expect(withShortcut.contains("Flow button"))
+
+        let withoutShortcut = TourTaskID.openWindowFlow.detail(windowFlowShortcut: nil)
+        #expect(withoutShortcut.contains("Flow button"))
+        #expect(withoutShortcut.contains("Open Window Flow"))
     }
 
     @Test("DisplayProfile auto-tune summary adapts to display count and desktop count")

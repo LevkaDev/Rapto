@@ -90,9 +90,9 @@ nonisolated enum TourTaskID: String, Equatable, Hashable, CaseIterable, Sendable
             return "Drag any app icon in the Desktops Bar onto another desktop number"
         case .openWindowFlow:
             if let shortcut = windowFlowShortcut, !shortcut.isEmpty {
-                return "Press \(shortcut) or click Open Window Flow below to browse all windows in 3D"
+                return "Click the Flow button on the Desktops Bar, press \(shortcut), or click Open Window Flow below"
             }
-            return "Click Open Window Flow below to browse all windows across desktops in 3D"
+            return "Click the Flow button on the Desktops Bar or click Open Window Flow below"
         }
     }
 }

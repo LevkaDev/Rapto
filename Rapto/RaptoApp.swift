@@ -241,6 +241,16 @@ struct MenuBarView: View {
         Divider()
         
         Section("Quick Actions") {
+            Button {
+                appState.windowFlow.toggle()
+            } label: {
+                let shortcut = appState.shortcutDisplayString(for: .openWindowFlow)
+                Label(
+                    shortcut.map { "Open Window Flow (\($0))" } ?? "Open Window Flow",
+                    systemImage: "rectangle.stack"
+                )
+            }
+
             Button("Open Overlay") {
                 appState.toggleOverlay()
             }

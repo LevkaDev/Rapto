@@ -55,6 +55,16 @@ extension AppState {
             accessibilityDescription: isPaused ? "Resume Rapto" : "Pause Rapto"
         )
         menu.addItem(pauseItem)
+
+        let flowTitle = shortcutDisplayString(for: .openWindowFlow).map { "Open Window Flow (\($0))" } ?? "Open Window Flow"
+        let flowItem = SpaceBarMenuItem(title: flowTitle) { [weak self] in
+            self?.windowFlow.toggle(onDisplayID: displayID)
+        }
+        flowItem.image = NSImage(
+            systemSymbolName: "rectangle.stack",
+            accessibilityDescription: "Window Flow"
+        )
+        menu.addItem(flowItem)
         menu.addItem(.separator())
 
         menu.addItem(.sectionHeader(title: "Desktop \(space.number)"))

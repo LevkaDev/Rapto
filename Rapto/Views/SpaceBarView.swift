@@ -12,6 +12,7 @@ struct SpaceBarView: View {
     @ObservedObject var controller: SpaceBarController
     @ObservedObject private var responsiveness = AppResponsiveness.shared
     @State private var drag: GlyphDrag?
+    @State private var isHoveringFlowButton = false
 
     private struct GlyphDrag {
         let glyphID: String
@@ -86,6 +87,8 @@ struct SpaceBarView: View {
                     .accessibilityLabel("Accessibility is turned off")
             }
 
+            windowFlowButton
+
             ForEach(display.spaces) { space in
                 if space.isFullScreen {
                     fullScreenSegment(space)
@@ -116,6 +119,48 @@ struct SpaceBarView: View {
             }
         }
         .environment(\.colorScheme, isDark ? .dark : .light)
+    }
+
+    private var windowFlowButton: some View {
+        let isActive = controller.isWindowFlowOpen
+        let tooltip = controller.windowFlowShortcut.map { "Window Flow (\($0))" } ?? "Window Flow"
+        return WindowFlowBarIcon(
+            color: isActive ? currentDesktopColor : ink,
+            isHighlighted: isHoveringFlowButton || isActive
+        )
+        .frame(width: iconSize + 4, height: iconSize)
+        .padding(.horizontal, 3)
+        .padding(.vertical, 1)
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(
+                    isActive
+                        ? currentDesktopColor.opacity(0.24)
+                        : (isHoveringFlowButton ? ink.opacity(0.16) : (isPlain ? Color.clear : ink.opacity(0.06)))
+                )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(
+                    isActive
+                        ? currentDesktopColor.opacity(0.90)
+                        : (isHoveringFlowButton ? ink.opacity(0.48) : (isPlain ? Color.clear : ink.opacity(0.24))),
+                    lineWidth: isActive ? 1.25 : 0.85
+                )
+        }
+        .scaleEffect(isHoveringFlowButton ? 1.04 : 1.0)
+        .animation(.easeOut(duration: 0.12), value: isHoveringFlowButton)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            isHoveringFlowButton = inside
+        }
+        .onTapGesture {
+            controller.openWindowFlow(displayID: displayID)
+        }
+        .help(tooltip)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Window Flow")
+        .accessibilityAddTraits(.isButton)
     }
 
     private var addDesktopButton: some View {
@@ -331,6 +376,50 @@ struct SpaceBarView: View {
         }
         let option = controller.movesFollowWindow ? "Hold Option to stay here." : "Hold Option to go there too."
         return "\(name)\nDrag to another desktop to move the window (\(option))\nRight-click for \(glyph.appName) & desktop options."
+    }
+}
+
+private struct WindowFlowBarIcon: View {
+    let color: Color
+    let isHighlighted: Bool
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width
+            let h = size.height
+            let baseAlpha: Double = isHighlighted ? 0.96 : 0.72
+            let wingAlpha: Double = isHighlighted ? 0.68 : 0.42
+
+            // Left perspective wing card (mirrors Window Flow's 3D amphitheatre strip)
+            var leftWing = Path()
+            leftWing.move(to: CGPoint(x: w * 0.06, y: h * 0.19))
+            leftWing.addLine(to: CGPoint(x: w * 0.22, y: h * 0.25))
+            leftWing.addLine(to: CGPoint(x: w * 0.22, y: h * 0.75))
+            leftWing.addLine(to: CGPoint(x: w * 0.06, y: h * 0.81))
+            leftWing.closeSubpath()
+            ctx.fill(leftWing, with: .color(color.opacity(wingAlpha)))
+
+            // Right perspective wing card
+            var rightWing = Path()
+            rightWing.move(to: CGPoint(x: w * 0.94, y: h * 0.19))
+            rightWing.addLine(to: CGPoint(x: w * 0.78, y: h * 0.25))
+            rightWing.addLine(to: CGPoint(x: w * 0.78, y: h * 0.75))
+            rightWing.addLine(to: CGPoint(x: w * 0.94, y: h * 0.81))
+            rightWing.closeSubpath()
+            ctx.fill(rightWing, with: .color(color.opacity(wingAlpha)))
+
+            // Center hero card
+            let centerRect = CGRect(
+                x: w * 0.28,
+                y: h * 0.13,
+                width: w * 0.44,
+                height: h * 0.74
+            )
+            let centerPath = Path(roundedRect: centerRect, cornerRadius: max(1.6, h * 0.12))
+            ctx.fill(centerPath, with: .color(color.opacity(isHighlighted ? 0.30 : 0.16)))
+            ctx.stroke(centerPath, with: .color(color.opacity(baseAlpha)), lineWidth: 1.25)
+        }
+        .accessibilityHidden(true)
     }
 }
 

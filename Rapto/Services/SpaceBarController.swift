@@ -184,6 +184,12 @@ final class SpaceBarController: ObservableObject {
     /// Whether macOS Accessibility permission is currently granted; when false, the bar shows a warning icon.
     @Published var hasAccessibilityPermission = true
     var onAccessibilityWarningClicked: (() -> Void)?
+    /// Whether Window Flow is currently open (highlights the Flow button on the bar).
+    @Published var isWindowFlowOpen = false
+    /// Live shortcut string for Window Flow shown in the bar button tooltip, or nil when unbound.
+    @Published var windowFlowShortcut: String?
+    /// Fired when the user clicks the Window Flow button on a display's bar.
+    var onWindowFlowClicked: ((String) -> Void)?
     /// Outline of the current desktop, the same color as the active window border
     @Published var currentDesktopColor: NSColor = .systemBlue
     @Published var style: SpaceBarStyle = .dark {
@@ -405,6 +411,11 @@ final class SpaceBarController: ObservableObject {
         pendingAction = nil
         askForSwitchPermissionIfNeeded()
         startSwitch(spaceID: spaceID, displayID: displayID)
+    }
+
+    /// Toggles Window Flow for the display owning this bar.
+    func openWindowFlow(displayID: String) {
+        onWindowFlowClicked?(displayID)
     }
 
     /// Open the app shown by this icon. If its desktop is hidden, switch there
