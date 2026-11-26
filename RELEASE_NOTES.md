@@ -8,6 +8,7 @@
 
 ### Fixes
 - Changing Window Gap or Screen Edge Gap in Settings now updates snapped windows in Drag to Snap right away, and updates every connected display.
+- Removed the duplicate 2+1+2 layout from the layout list. Any desktop, workspace, shortcut, or setting that used it now opens Center + Split Sides automatically.
 - Switching from Auto-tiling to Manual mode now keeps your windows in place instead of reshuffling them.
 - Background apps sitting idle on another desktop (such as WhatsApp) now move cleanly when dragged in the Desktops Bar.
 - Switching back to an Auto-tiling desktop no longer reshuffles or swaps windows while an idle app (such as Maps) is waking up.

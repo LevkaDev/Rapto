@@ -50,7 +50,7 @@ enum CycleDirection: CustomStringConvertible, Sendable {
 /// Saved layout info for persistence (without PIDs since they change on restart)
 /// Groups are restored by position, not by saved app info
 struct SavedLayoutInfo: Codable {
-    let templateID: UUID
+    var templateID: UUID
     var slots: [SavedSlotInfo]
     /// Visible area of the screen (CG coordinates) the frames were saved for
     var visibleFrame: CGRect?
@@ -70,7 +70,7 @@ struct SavedLayoutInfo: Codable {
 
 /// A desktop's Manual layout, kept while the desktop is in another mode so Manual comes back as it was
 struct ManualLayoutSnapshot: Codable {
-    let templateID: UUID
+    var templateID: UUID
     var slots: [SlotSnapshot]
     /// Visible area of the screen (CG coordinates) the frames were saved for
     var visibleFrame: CGRect?
@@ -1468,8 +1468,16 @@ class WindowLayoutManager: ObservableObject {
     }
 
     func loadTemplateArrangement(_ templateID: UUID, forSpaceID spaceID: String, screenID: String) -> ManualLayoutSnapshot? {
-        guard let data = UserDefaults.standard.data(forKey: Self.manualLayoutKey(forSpaceID: spaceID, screenID: screenID, templateID: templateID)) else { return nil }
-        return (try? JSONDecoder().decode(ManualLayoutSnapshot.self, from: data)).map { fitted($0, toScreenID: screenID) }
+        let canonical = PredefinedTemplates.canonicalID(for: templateID)
+        let primaryKey = Self.manualLayoutKey(forSpaceID: spaceID, screenID: screenID, templateID: canonical)
+        let fallbackKey = canonical == PredefinedTemplates.centerSplitSidebars.id
+            ? Self.manualLayoutKey(forSpaceID: spaceID, screenID: screenID, templateID: PredefinedTemplates.retiredTwoOneTwoID)
+            : nil
+        guard let data = UserDefaults.standard.data(forKey: primaryKey)
+            ?? fallbackKey.flatMap({ UserDefaults.standard.data(forKey: $0) }),
+              var snapshot = try? JSONDecoder().decode(ManualLayoutSnapshot.self, from: data) else { return nil }
+        snapshot.templateID = PredefinedTemplates.canonicalID(for: snapshot.templateID)
+        return fitted(snapshot, toScreenID: screenID)
     }
 
     private func currentManualSnapshot(forScreenID screenID: String) -> ManualLayoutSnapshot? {
@@ -1513,8 +1521,10 @@ class WindowLayoutManager: ObservableObject {
     }
 
     func loadManualLayout(forSpaceID spaceID: String, screenID: String) -> ManualLayoutSnapshot? {
-        guard let data = UserDefaults.standard.data(forKey: Self.manualLayoutKey(forSpaceID: spaceID, screenID: screenID)) else { return nil }
-        return (try? JSONDecoder().decode(ManualLayoutSnapshot.self, from: data)).map { fitted($0, toScreenID: screenID) }
+        guard let data = UserDefaults.standard.data(forKey: Self.manualLayoutKey(forSpaceID: spaceID, screenID: screenID)),
+              var snapshot = try? JSONDecoder().decode(ManualLayoutSnapshot.self, from: data) else { return nil }
+        snapshot.templateID = PredefinedTemplates.canonicalID(for: snapshot.templateID)
+        return fitted(snapshot, toScreenID: screenID)
     }
 
     func removeManualLayout(forSpaceID spaceID: String, screenID: String) {
@@ -1589,7 +1599,8 @@ class WindowLayoutManager: ObservableObject {
         
         if let data = UserDefaults.standard.data(forKey: key) {
             do {
-                let savedInfo = try JSONDecoder().decode(SavedLayoutInfo.self, from: data)
+                var savedInfo = try JSONDecoder().decode(SavedLayoutInfo.self, from: data)
+                savedInfo.templateID = PredefinedTemplates.canonicalID(for: savedInfo.templateID)
                 logger.info("Loaded layout for space \(spaceID), screen \(screenID): templateID=\(savedInfo.templateID)")
                 return fitted(savedInfo, toScreenID: screenID)
             } catch {
@@ -1600,7 +1611,8 @@ class WindowLayoutManager: ObservableObject {
         let legacyKey = Self.legacyStorageKey(forSpaceID: spaceID)
         if let data = UserDefaults.standard.data(forKey: legacyKey) {
             do {
-                let savedInfo = try JSONDecoder().decode(SavedLayoutInfo.self, from: data)
+                var savedInfo = try JSONDecoder().decode(SavedLayoutInfo.self, from: data)
+                savedInfo.templateID = PredefinedTemplates.canonicalID(for: savedInfo.templateID)
                 logger.info("Loaded legacy v3 layout for space \(spaceID)")
                 return savedInfo
             } catch {

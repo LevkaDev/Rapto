@@ -509,7 +509,7 @@ extension AppState {
     /// Apply a template directly to current windows (without overlay)
     /// Groups windows intelligently: same-app windows together, excess windows in last slot
     func applyTemplateDirectly(templateID: UUID) {
-        guard let template = allTemplates.first(where: { $0.id == templateID }) else {
+        guard let template = template(withID: templateID) else {
             logger.warning("Template not found for ID: \(templateID)")
             return
         }

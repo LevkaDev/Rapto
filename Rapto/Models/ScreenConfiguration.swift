@@ -31,12 +31,22 @@ struct ScreenConfiguration: Codable, Equatable {
             mode = savedMode
         }
         
-        let savedTemplateID = defaults.string(forKey: "defaultTemplateForNewSpaces").flatMap(UUID.init(uuidString:))
+        let savedTemplateID = PredefinedTemplates.canonicalOptionalID(
+            for: defaults.string(forKey: "defaultTemplateForNewSpaces").flatMap(UUID.init(uuidString:))
+        )
         var config = ScreenConfiguration(mode: mode, templateID: mode == .manualAssignment ? savedTemplateID : nil, autoTilingMaxWindows: nil)
         if mode == .dragSnap {
             config.dragSnapTemplateID = savedTemplateID
         }
         return config
+    }
+
+    /// Resolves any retired built-in layout IDs in this configuration to their active replacement.
+    func normalized() -> ScreenConfiguration {
+        var copy = self
+        copy.templateID = PredefinedTemplates.canonicalOptionalID(for: templateID)
+        copy.dragSnapTemplateID = PredefinedTemplates.canonicalOptionalID(for: dragSnapTemplateID)
+        return copy
     }
     
     init(mode: TilingMode, templateID: UUID? = nil, autoTilingMaxWindows: Int? = nil) {
@@ -135,23 +145,23 @@ struct ConfigurationKey {
 struct ScreenConfigurationStorage {
     private static let key = "screenConfigurations_v1"
     
-    static func load() -> [String: ScreenConfiguration] {
-        guard let data = UserDefaults.standard.data(forKey: key) else {
+    static func load(from store: UserDefaults = .standard) -> [String: ScreenConfiguration] {
+        guard let data = store.data(forKey: key) else {
             return [:]
         }
         
         do {
             let entries = try JSONDecoder().decode([String: LossyDecodable<ScreenConfiguration>].self, from: data)
-            let configs = entries.compactMapValues(\.value)
+            let configs = entries.compactMapValues { $0.value?.normalized() }
             if configs.count < entries.count {
                 // The next save drops the entries that failed; keep the data as it was
-                UserDefaults.standard.set(data, forKey: key + "_backup")
+                store.set(data, forKey: key + "_backup")
                 debugLog("ScreenConfigurationStorage", "Skipped \(entries.count - configs.count) configurations that could not be read")
             }
             return configs
         } catch {
             debugLog("ScreenConfigurationStorage", "Failed to decode configurations: \(error)")
-            UserDefaults.standard.set(data, forKey: key + "_backup")
+            store.set(data, forKey: key + "_backup")
             return [:]
         }
     }

@@ -23,7 +23,19 @@ nonisolated enum PredefinedTemplates {
     private static let centerLeftSplitID = UUID(uuidString: "00000001-0000-0000-0000-00000000000B")!
     private static let centerRightSplitID = UUID(uuidString: "00000001-0000-0000-0000-00000000000C")!
     private static let columns4ID = UUID(uuidString: "00000001-0000-0000-0000-00000000000D")!
-    private static let twoOneTwoID = UUID(uuidString: "00000001-0000-0000-0000-00000000000E")!
+
+    /// Retired duplicate of `centerSplitSidebars` (had identical 20% / 60% / 20% zones and fill order).
+    /// Kept so saved preferences, layouts, workspaces, shortcuts, and scripts resolve cleanly.
+    static let retiredTwoOneTwoID = UUID(uuidString: "00000001-0000-0000-0000-00000000000E")!
+
+    /// Resolves retired built-in layout IDs to their active replacement.
+    static func canonicalID(for id: UUID) -> UUID {
+        id == retiredTwoOneTwoID ? centerSplitSidebarsID : id
+    }
+
+    static func canonicalOptionalID(for id: UUID?) -> UUID? {
+        id.map(canonicalID(for:))
+    }
     
     static let full = GridTemplate(
         id: fullID,
@@ -169,19 +181,6 @@ nonisolated enum PredefinedTemplates {
         ]
     )
     
-    static let twoOneTow = GridTemplate(
-        id: twoOneTwoID,
-        name: "2+1+2",
-        icon: "square.grid.3x1.below.line.grid.1x2",
-        zones: [
-            Zone(relativeFrame: CGRect(x: 0.2, y: 0, width: 0.6, height: 1), fillOrder: 0),
-            Zone(relativeFrame: CGRect(x: 0, y: 0.5, width: 0.2, height: 0.5), fillOrder: 1),
-            Zone(relativeFrame: CGRect(x: 0, y: 0, width: 0.2, height: 0.5), fillOrder: 2),
-            Zone(relativeFrame: CGRect(x: 0.8, y: 0.5, width: 0.2, height: 0.5), fillOrder: 3),
-            Zone(relativeFrame: CGRect(x: 0.8, y: 0, width: 0.2, height: 0.5), fillOrder: 4)
-        ]
-    )
-    
     static let standard: [GridTemplate] = [
         full,
         halvesVertical,
@@ -198,8 +197,7 @@ nonisolated enum PredefinedTemplates {
         centerWide,
         centerLeftSplit,
         centerRightSplit,
-        columns4,
-        twoOneTow
+        columns4
     ]
 
     static let ultrawideIDs: Set<UUID> = Set(ultrawide.map(\.id))

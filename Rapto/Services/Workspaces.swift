@@ -98,9 +98,18 @@ enum WorkspaceSession {
 enum WorkspaceStorage {
     private static let key = "workspaces.v1"
 
-    static func load() -> [Workspace] {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([Workspace].self, from: data)) ?? []
+    static func load(from store: UserDefaults = .standard) -> [Workspace] {
+        guard let data = store.data(forKey: key),
+              let workspaces = try? JSONDecoder().decode([Workspace].self, from: data) else { return [] }
+        return workspaces.map { normalized($0) }
+    }
+
+    static func normalized(_ workspace: Workspace) -> Workspace {
+        var copy = workspace
+        for index in copy.screens.indices {
+            copy.screens[index].templateID = PredefinedTemplates.canonicalOptionalID(for: copy.screens[index].templateID)
+        }
+        return copy
     }
 
     static func save(_ workspaces: [Workspace]) {
@@ -649,7 +658,7 @@ extension AppState {
             }
 
             if let templateID = target.part.templateID,
-               let template = allTemplates.first(where: { $0.id == templateID }) {
+               let template = template(withID: templateID) {
                 placeWindows(assignments, in: template, on: target.screen, slotFrames: frames)
             } else {
                 for (slotIndex, windows) in assignments.enumerated() {

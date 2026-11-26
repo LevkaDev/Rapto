@@ -1678,7 +1678,8 @@ class AutoTilingService: ObservableObject {
             return activeTemplate ?? allTemplates.first
         }
         
-        return allTemplates.first { $0.id == templateID } ?? activeTemplate
+        let canonical = PredefinedTemplates.canonicalID(for: templateID)
+        return allTemplates.first { $0.id == canonical } ?? activeTemplate
     }
     
     // MARK: - Smart Window Assignment
