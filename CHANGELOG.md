@@ -10,6 +10,8 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+## [6.2] - 2026-11-26
+
 ### Added
 - **Redesigned Window Flow–styled onboarding and two-part interactive tour**
   (`WindowFlowOnboardingStyle`, `OnboardingView`, `OnboardingStepViews`, `InteractiveTourView`,
