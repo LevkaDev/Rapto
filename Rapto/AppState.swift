@@ -31,7 +31,7 @@ class AppState: ObservableObject {
         }
     }
 
-    private var isWindowFlowOpen: Bool = false
+    private(set) var isWindowFlowOpen: Bool = false
     var activeWindowFlowBinding: HotkeyBinding?
     
     @Published var selectedTemplate: GridTemplate?
@@ -134,6 +134,53 @@ class AppState: ObservableObject {
             } else if mode != .manualAssignment {
                 oneTimeHints.hideIfShowing(.manualNeedsLayout)
             }
+        }
+    }
+
+    /// Pure rule deciding whether `setMode(targetMode, for: screen)` must run to activate a mode.
+    /// Checking `effectiveMode != targetMode` alone fails on a fresh install: setting
+    /// `defaultModeForNewSpaces = targetMode` makes `effectiveMode` return `targetMode` via
+    /// `ScreenConfiguration.userDefault` even though no service was ever started on the desktop.
+    nonisolated static func needsModeActivation(
+        targetMode: TilingMode,
+        effectiveMode: TilingMode,
+        hasExplicitConfig: Bool,
+        isServiceRunning: Bool
+    ) -> Bool {
+        if effectiveMode != targetMode { return true }
+        guard targetMode != .none else { return false }
+        return !hasExplicitConfig || !isServiceRunning
+    }
+
+    /// Ensures `mode` is explicitly stored for `screen`'s current desktop and its service is running,
+    /// without clearing an existing layout when the mode is already explicitly active.
+    func ensureModeActive(_ mode: TilingMode, on screen: NSScreen) {
+        let screenID = screenManager.identifier(for: screen)
+        let screenSpaceID = spaceID(for: screen)
+        let key = ConfigurationKey.make(spaceID: screenSpaceID, screenID: screenID)
+        let hasExplicitConfig = screenConfigurations[key] != nil
+        let effectiveMode = self.mode(for: screen)
+        let serviceRunning: Bool
+        switch mode {
+        case .dragSnap:
+            serviceRunning = dragSnapService?.isActive(forScreenID: screenID) == true
+        case .autoTiling:
+            serviceRunning = autoTilingService?.isActive(forScreenID: screenID) == true
+        case .manualAssignment:
+            serviceRunning = hasExplicitConfig
+                && effectiveMode == .manualAssignment
+                && (windowSwapService?.isActive == true)
+        case .none:
+            serviceRunning = true
+        }
+
+        if Self.needsModeActivation(
+            targetMode: mode,
+            effectiveMode: effectiveMode,
+            hasExplicitConfig: hasExplicitConfig,
+            isServiceRunning: serviceRunning
+        ) {
+            setMode(mode, for: screen)
         }
     }
 
@@ -572,6 +619,15 @@ class AppState: ObservableObject {
             }
         }
     }
+
+    /// True while the compact floating interactive tour HUD is open.
+    @Published var isInteractiveTourActive: Bool = false
+
+    /// Saved pre-arrange CG window frames and screen mode during onboarding/tour so "Put Back" restores cleanly.
+    var preArrangeWindowFrames: [CGWindowID: CGRect] = [:]
+    var preArrangeScreenID: String?
+    var preArrangeScreenMode: TilingMode?
+    @Published var hasUndoableFirstArrange: Bool = false
     
     var hasCompletedOnboarding: Bool {
         get { UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") }
@@ -585,6 +641,10 @@ class AppState: ObservableObject {
             UserDefaults.standard.set(hasCompletedSetupGuide, forKey: "hasCompletedSetupGuide")
         }
     }
+
+    /// Set by Guide's Smart App Scanner when no terminals, modal editors or VMs are installed,
+    /// so everyday users aren't left with an incomplete checklist badge for apps they don't use.
+    @Published var detectedNoPassthroughApps: Bool = false
 
     /// App bundle identifiers hidden by the user in Guide's Smart App Scanner (local to this Mac)
     @Published var dismissedAppSuggestions: Set<String> = Set(
@@ -627,7 +687,12 @@ class AppState: ObservableObject {
         ScreenIDMigration.run()
         return WorkspaceStorage.load()
     }() {
-        didSet { WorkspaceStorage.save(workspaces) }
+        didSet {
+            WorkspaceStorage.save(workspaces)
+            if !workspaces.isEmpty {
+                oneTimeHints.markCompleted(.workspacesTip)
+            }
+        }
     }
     
     // MARK: - Template Hotkeys
@@ -695,6 +760,11 @@ class AppState: ObservableObject {
         flow.onVisibilityChanged = { [weak self] visible in
             guard let self else { return }
             self.isWindowFlowOpen = visible
+            self.spaceBarController.isWindowFlowOpen = visible
+            if visible {
+                self.oneTimeHints.markCompleted(.manyWindowsFlow)
+                NotificationCenter.default.post(name: .raptoTourDidOpenWindowFlow, object: nil)
+            }
             self.windowUsageTracker.isSuppressed = visible
             let suppress = visible || self.isOverlayVisible
             self.dragSnapService?.suppressMouseEvents = suppress
@@ -716,9 +786,33 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Temporarily suspends tiling, snapping, window watchers and global shortcuts without
+    /// changing any desktop's saved mode or layout. Always starts active on launch.
+    @Published var isPaused: Bool = false {
+        didSet {
+            guard isPaused != oldValue else { return }
+            handlePauseStateChanged()
+        }
+    }
+
+    /// New installs show the menu bar icon by default so Rapto stays reachable on notched MacBooks
+    /// where the Desktops Bar hides under the notch. Existing installs set up before this default keep it off.
+    nonisolated static func menuBarIconForInstallWithoutSavedPreference(hasCompletedOnboarding: Bool) -> Bool {
+        !hasCompletedOnboarding
+    }
+
+    /// Persists the initial menu bar icon visibility when unset, so finishing onboarding does not flip it.
+    nonisolated static func settleUnsavedMenuBarIcon(in defaults: UserDefaults) {
+        guard defaults.object(forKey: "showsMenuBarIcon") == nil else { return }
+        let show = menuBarIconForInstallWithoutSavedPreference(
+            hasCompletedOnboarding: defaults.bool(forKey: "hasCompletedOnboarding")
+        )
+        defaults.set(show, forKey: "showsMenuBarIcon")
+    }
+
     /// Whether the Rapto icon stays in the menu bar while the desktops pill is shown.
     /// The pill's right-click menu covers the same controls.
-    @Published var showsMenuBarIcon: Bool = false {
+    @Published var showsMenuBarIcon: Bool = true {
         didSet {
             guard showsMenuBarIcon != oldValue else { return }
             UserDefaults.standard.set(showsMenuBarIcon, forKey: "showsMenuBarIcon")
@@ -909,6 +1003,9 @@ class AppState: ObservableObject {
         self.snapBackService?.onWindowSnappedBack = { [weak self] cgSlotFrame, screenID in
             self?.didSnapWindowBack(cgSlotFrame: cgSlotFrame, screenID: screenID)
         }
+        self.autoTilingService?.onWindowSnappedBack = { [weak self] cgSlotFrame, screenID in
+            self?.didSnapWindowBack(cgSlotFrame: cgSlotFrame, screenID: screenID)
+        }
         self.focusModeService?.spaceIDForScreen = { [weak self] screen in self?.spaceID(for: screen) ?? "" }
         
         self.groupIndicatorManager = FloatingGroupIndicatorManager(appState: self)
@@ -1016,7 +1113,25 @@ class AppState: ObservableObject {
         }
         spaceBarController.onDidMoveWindow = { [weak self] windowID, spaceKey, displayID in
             self?.spaceBarDidMoveWindow(windowID, toSpaceKey: spaceKey, displayID: displayID)
+            NotificationCenter.default.post(name: .raptoTourDidMoveWindowToDesktop, object: nil)
         }
+        spaceBarController.onUserRevealedHoverBar = { [weak self] in
+            self?.didRevealNotchDesktopsBar()
+        }
+        spaceBarController.onUserUsedDesktopsBar = { [weak self] in
+            self?.oneTimeHints.markCompleted(.secondDesktopCreated)
+        }
+        spaceBarController.onWindowFlowClicked = { [weak self] displayID in
+            self?.windowFlow.toggle(onDisplayID: displayID)
+        }
+        spaceBarController.windowFlowShortcut = activeWindowFlowBinding?.displayString
+        NotificationCenter.default.publisher(for: .dragSnapDidSnap)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.maybeShowWindowFlowOrWorkspacesHint(on: self.screenManager.activeScreen())
+            }
+            .store(in: &cancellables)
         spaceBarController.start(enabled: showsSpaceBar)
         windowUsageTracker.start()
 
@@ -1029,6 +1144,11 @@ class AppState: ObservableObject {
 
         // The menu bar icon may be hidden, so onboarding cannot wait for its menu to open.
         checkAndShowOnboardingIfNeeded()
+        if hasCompletedOnboarding {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.showNotchDesktopsBarHintIfNeeded()
+            }
+        }
         UpdaterManager.shared.appState = self
         Scripting.appState = self
         ReleaseNotes.showIfUpdated(appState: self)
@@ -1115,6 +1235,7 @@ class AppState: ObservableObject {
         if defaults.object(forKey: "showsSpaceBar") != nil {
             showsSpaceBar = defaults.bool(forKey: "showsSpaceBar")
         }
+        Self.settleUnsavedMenuBarIcon(in: defaults)
         if defaults.object(forKey: "showsMenuBarIcon") != nil {
             showsMenuBarIcon = defaults.bool(forKey: "showsMenuBarIcon")
         }
@@ -1236,7 +1357,9 @@ class AppState: ObservableObject {
         loadFocusModeDoubleTapModifier()
         loadFloatingDoubleTapSettings()
         
-        autoTilingPreferences = AutoTilingPreferencesStorage.load()
+        let dominantProfile = DisplayProfile.dominant(for: screenManager.allScreens())
+        AutoTilingPreferencesStorage.settleUnsaved(in: defaults, for: dominantProfile)
+        autoTilingPreferences = AutoTilingPreferencesStorage.load(from: defaults)
         autoTilingService?.preferences = autoTilingPreferences
         autoTilingService?.allTemplates = allTemplates
         logger.info("Loaded auto-tiling preferences: maxWindows=\(self.autoTilingPreferences.maxWindows)")

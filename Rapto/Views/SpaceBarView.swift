@@ -12,6 +12,7 @@ struct SpaceBarView: View {
     @ObservedObject var controller: SpaceBarController
     @ObservedObject private var responsiveness = AppResponsiveness.shared
     @State private var drag: GlyphDrag?
+    @State private var isHoveringFlowButton = false
 
     private struct GlyphDrag {
         let glyphID: String
@@ -86,6 +87,8 @@ struct SpaceBarView: View {
                     .accessibilityLabel("Accessibility is turned off")
             }
 
+            windowFlowButton
+
             ForEach(display.spaces) { space in
                 if space.isFullScreen {
                     fullScreenSegment(space)
@@ -116,6 +119,45 @@ struct SpaceBarView: View {
             }
         }
         .environment(\.colorScheme, isDark ? .dark : .light)
+    }
+
+    private var windowFlowButton: some View {
+        let isActive = controller.isWindowFlowOpen
+        let isHovered = isHoveringFlowButton
+        let tooltip = controller.windowFlowShortcut.map { "Window Flow (\($0))" } ?? "Window Flow"
+        return WindowFlowBarIcon(
+            color: isActive ? currentDesktopColor : ink,
+            isHighlighted: isHovered || isActive
+        )
+        .frame(width: iconSize * 0.68, height: iconSize * 0.58)
+        .frame(width: iconSize, height: iconSize)
+        .background {
+            Circle().fill(
+                isActive
+                    ? currentDesktopColor.opacity(0.24)
+                    : ink.opacity(isHovered ? 0.18 : 0)
+            )
+        }
+        .overlay {
+            Circle().strokeBorder(
+                isActive
+                    ? currentDesktopColor.opacity(0.95)
+                    : ink.opacity(isHovered ? 0.85 : (isPlain ? 0 : 0.4)),
+                lineWidth: 1
+            )
+        }
+        .padding(.horizontal, 2)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            isHoveringFlowButton = inside
+        }
+        .onTapGesture {
+            controller.openWindowFlow(displayID: displayID)
+        }
+        .help(tooltip)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Window Flow")
+        .accessibilityAddTraits(.isButton)
     }
 
     private var addDesktopButton: some View {
@@ -331,6 +373,43 @@ struct SpaceBarView: View {
         }
         let option = controller.movesFollowWindow ? "Hold Option to stay here." : "Hold Option to go there too."
         return "\(name)\nDrag to another desktop to move the window (\(option))\nRight-click for \(glyph.appName) & desktop options."
+    }
+}
+
+private struct WindowFlowBarIcon: View {
+    let color: Color
+    let isHighlighted: Bool
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width
+            let h = size.height
+            let centerAlpha: Double = isHighlighted ? 1.0 : 0.72
+            let sideAlpha: Double = isHighlighted ? 0.78 : 0.48
+
+            // Left and right wing strokes (compact Flow silhouette matching the circular "+" button)
+            var sides = Path()
+            sides.move(to: CGPoint(x: w * 0.10, y: h * 0.25))
+            sides.addLine(to: CGPoint(x: w * 0.10, y: h * 0.75))
+            sides.move(to: CGPoint(x: w * 0.90, y: h * 0.25))
+            sides.addLine(to: CGPoint(x: w * 0.90, y: h * 0.75))
+            ctx.stroke(
+                sides,
+                with: .color(color.opacity(sideAlpha)),
+                style: StrokeStyle(lineWidth: 1.15, lineCap: .round)
+            )
+
+            // Center hero card
+            let centerRect = CGRect(
+                x: w * 0.28,
+                y: h * 0.14,
+                width: w * 0.44,
+                height: h * 0.72
+            )
+            let centerPath = Path(roundedRect: centerRect, cornerRadius: max(1.1, h * 0.12))
+            ctx.stroke(centerPath, with: .color(color.opacity(centerAlpha)), lineWidth: 1.2)
+        }
+        .accessibilityHidden(true)
     }
 }
 

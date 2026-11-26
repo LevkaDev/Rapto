@@ -553,6 +553,7 @@ class FloatingGroupIndicatorManager {
         
         activateAppIfStillBehind(window)
         pendingActive[key] = (windowID, Date())
+        NotificationCenter.default.post(name: .raptoTourDidCycleGroup, object: nil)
         updateIndicators()
         // The window server may report the new z-order with a delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in

@@ -19,9 +19,55 @@ extension AppState {
     func setupModeObservation() {
     }
     
+    /// Suspends or resumes all active window-management services without altering saved modes or layouts.
+    func handlePauseStateChanged() {
+        if isPaused {
+            for screen in screenManager.allScreens() {
+                let screenID = screenManager.identifier(for: screen)
+                if layoutManager.state(forScreenID: screenID).isActive {
+                    updateSlotFramesFromWindows(forScreenID: screenID)
+                    layoutManager.saveLayoutInfo(forSpaceID: spaceID(for: screen), screenID: screenID)
+                }
+            }
+            if isOverlayVisible {
+                isOverlayVisible = false
+            }
+            dragSnapService?.stop()
+            autoTilingService?.stop()
+            snapBackService?.stop()
+            windowSwapService?.stop()
+            windowResizeService?.stop()
+            windowHighlightService?.stop()
+            focusModeService?.stop()
+            removeManualModeGroupingObservers()
+            groupIndicatorManager?.hideAll()
+            checkPassthroughState()
+            logger.info("Rapto paused: window management and shortcuts suspended")
+            debugLog("AppState", " Rapto paused")
+        } else {
+            checkPassthroughState()
+            if focusModeEnabled {
+                focusModeService?.start()
+                focusModeService?.doubleTapEnabled = focusModeDoubleTapEnabled
+            }
+            if isGroupingEnabled && autoGroupSameApp {
+                setupWindowMonitoring()
+            }
+            applyInitialModesToAllScreens()
+            setupSwapHotkeys()
+            groupIndicatorManager?.updateIndicators()
+            logger.info("Rapto resumed: window management and shortcuts active")
+            debugLog("AppState", " Rapto resumed")
+        }
+    }
+
     /// Apply saved tiling modes to ALL connected screens at app startup
     /// This ensures that modes selected on empty screens work when windows appear later
     func applyInitialModesToAllScreens() {
+        guard !isPaused else {
+            debugLog("AppState", " Skipping applyInitialModesToAllScreens while paused")
+            return
+        }
         debugLog("AppState", " Applying initial modes to all \(NSScreen.screens.count) screens")
         
         for screen in NSScreen.screens {
@@ -37,6 +83,10 @@ extension AppState {
     }
     
     func updateHighlightForCurrentMode() {
+        guard !isPaused else {
+            windowHighlightService?.stop()
+            return
+        }
         let mode = currentMode
         debugLog("AppState", " updateHighlightForCurrentMode: highlightActiveWindow=\(highlightActiveWindow), disableInDragSnap=\(disableHighlightInDragSnapMode), currentMode=\(mode.displayName)")
         
@@ -142,6 +192,10 @@ extension AppState {
     }
 
     func handleModeChange(to mode: TilingMode, for screen: NSScreen, inheritAutoTilingLayout: Bool = true) {
+        guard !isPaused else {
+            debugLog("AppState", " Skipping handleModeChange while paused")
+            return
+        }
         let screenID = screenManager.identifier(for: screen)
         let screenName = screenManager.displayName(for: screen)
         logger.info("Tiling mode changed to: \(mode.displayName) for screen: \(screenName) (ID: \(screenID))")
@@ -339,6 +393,10 @@ extension AppState {
     /// Start services for a screen WITHOUT clearing its layout
     /// Used when a new display is detected - we want to start services but preserve any existing window tracking
     func startServicesForScreen(screenID: String, mode: TilingMode, screen: NSScreen) {
+        guard !isPaused else {
+            debugLog("AppState", " Skipping startServicesForScreen while paused")
+            return
+        }
         let screenName = screenManager.displayName(for: screen)
         debugLog("AppState", " startServicesForScreen: screen=\(screenName), mode=\(mode.displayName)")
         
@@ -403,7 +461,8 @@ extension AppState {
            let configuredTemplate = allTemplates.first(where: { $0.id == templateID }) {
             template = configuredTemplate
         } else {
-            template = allTemplates.first(where: { $0.name == "1+2 Left" }) ?? allTemplates.first ?? PredefinedTemplates.onePlusTwoLeft
+            let suggested = DisplayProfile.forScreen(screen).suggestedManualTemplate
+            template = allTemplates.first(where: { $0.id == suggested.id }) ?? allTemplates.first ?? suggested
         }
         
         logger.info("Applying manual mode template: \(template.name) for screen \(self.screenManager.displayName(for: screen))")

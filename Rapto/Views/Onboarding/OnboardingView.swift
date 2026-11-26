@@ -2,21 +2,21 @@
 //  OnboardingView.swift
 //  Rapto
 //
-//  First-launch onboarding: a dark demo stage on top, the step below, navigation at the bottom.
+//  Focused first-launch onboarding:
+//  1. Welcome & Accessibility (no Screen Recording wall up front)
+//  2. Auto-tuned Setup for this Mac + Mode choice (pre-selected, no "None" exit)
+//  3. Optional macOS Tiling step (only when Stage Manager or Drag-to-Snap edge conflict is on)
+//  4. Quick Start: Arrange My Windows (with Undo) or Sample Windows, Launch at Login, Start Short Tour
 //
 
 import Combine
 import SwiftUI
 
 enum OnboardingStep: Int, CaseIterable, Identifiable {
-    case welcome
-    case permissions
+    case welcomePermissions
+    case setup
     case macTiling
-    case mode
-    case desktopsBar
-    case workspaces
-    case shortcuts
-    case tryIt
+    case quickStart
 
     var id: Int { rawValue }
 }
@@ -25,62 +25,82 @@ struct OnboardingView: View {
     @EnvironmentObject var appState: AppState
 
     let onComplete: () -> Void
-    var onOpenSetupGuide: (() -> Void)? = nil
+    var onStartTour: ((TilingMode, Bool) -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var currentStep: OnboardingStep = .welcome
+    @State private var currentStep: OnboardingStep = .welcomePermissions
     @State private var hasAccessibilityPermission = AXIsProcessTrusted()
-    @State private var hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
     @State private var didAskAccessibility = false
-    @State private var didAskScreenRecording = false
-    @State private var chosenMode: TilingMode?
+    @State private var chosenMode: TilingMode = .dragSnap
     @State private var hoveredMode: TilingMode?
     @State private var autoTilingMaxWindows = OnboardingView.suggestedMaxWindows()
-    @State private var completedTasks: Set<OnboardingTask> = []
     @State private var shortcuts = OnboardingShortcuts()
     @State private var macTilingOptions = MacOSTiling.enabledOptions()
-    /// Decided once, so the step doesn't vanish while the user turns the options off
-    @State private var showsMacTilingStep = !MacOSTiling.enabledOptions().isEmpty
+    @State private var didArrangeDuringOnboarding = false
+    @State private var didUndoArrange = false
+
+    private var dominantProfile: DisplayProfile {
+        DisplayProfile.dominant(for: appState.screenManager.allScreens())
+    }
+
+    /// Only warn about macOS tiling when it actually fights the chosen setup:
+    /// Stage Manager fights every mode; macOS edge tiling fights Drag to Snap.
+    private var showsMacTilingStep: Bool {
+        if macTilingOptions.contains(.stageManager) { return true }
+        return chosenMode == .dragSnap && !macTilingOptions.isEmpty
+    }
 
     private var steps: [OnboardingStep] {
         OnboardingStep.allCases.filter { $0 != .macTiling || showsMacTilingStep }
     }
 
-    static let stageHeight: CGFloat = 230
+    static let stageHeight: CGFloat = 200
 
     var body: some View {
-        VStack(spacing: 0) {
-            OnboardingStage(clip: clip) { stage }
-                .frame(height: Self.stageHeight)
-                .ignoresSafeArea(edges: .top)
+        ZStack {
+            OnboardingSkyBackdrop()
 
-            stepContent
-                .padding(.horizontal, 32)
-                .padding(.top, 24)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .id(currentStep)
-                .transition(stepTransition)
+            VStack(spacing: 0) {
+                OnboardingStage(clip: clip) { stage }
+                    .frame(height: Self.stageHeight)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 34)
 
-            Divider()
+                stepContent
+                    .padding(.horizontal, 28)
+                    .padding(.top, 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .id(currentStep)
+                    .transition(stepTransition)
 
-            navigation
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(height: 0.5)
+
+                navigation
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+                    .background(Color(red: 0.03, green: 0.05, blue: 0.10).opacity(0.35))
+            }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .dark)
         .onAppear {
             shortcuts = OnboardingShortcuts()
             if appState.currentMode != .none {
                 chosenMode = appState.currentMode
+            } else {
+                chosenMode = .dragSnap
             }
             if appState.hasCompletedOnboarding {
                 autoTilingMaxWindows = appState.autoTilingPreferences.maxWindows
+            } else {
+                autoTilingMaxWindows = dominantProfile.suggestedMaxWindows
             }
         }
         .task(id: currentStep) {
-            guard currentStep == .permissions || currentStep == .macTiling else { return }
+            guard currentStep == .welcomePermissions || currentStep == .macTiling else { return }
             while !Task.isCancelled {
-                if currentStep == .permissions { checkPermissions() } else { checkMacTiling() }
+                if currentStep == .welcomePermissions { checkPermissions() } else { checkMacTiling() }
                 try? await Task.sleep(for: .seconds(1))
             }
         }
@@ -88,42 +108,30 @@ struct OnboardingView: View {
             checkPermissions()
             checkMacTiling()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .windowSwitcherDidOpen).receive(on: RunLoop.main)) { _ in
-            markDone(.windowSwitcher)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .dragSnapDidSnap).receive(on: RunLoop.main)) { _ in
-            markDone(.dragSnap)
-        }
-        .onChange(of: appState.isOverlayVisible) { _, isVisible in
-            if isVisible { markDone(.layoutOverlay) }
-        }
     }
 
     // MARK: - Stage
 
     private var clip: OnboardingClip? {
         switch currentStep {
-        case .welcome: return .welcome
-        case .mode: return .forMode(hoveredMode ?? chosenMode)
-        case .desktopsBar: return .desktops
-        case .workspaces: return .workspaces
-        case .permissions, .macTiling, .shortcuts, .tryIt: return nil
+        case .welcomePermissions:
+            return hasAccessibilityPermission ? .welcome : nil
+        case .setup:
+            return .forMode(hoveredMode ?? chosenMode)
+        case .macTiling:
+            return nil
+        case .quickStart:
+            return .forMode(chosenMode)
         }
     }
 
-    /// Live demos for the steps that show your own permissions and shortcuts
     @ViewBuilder
     private var stage: some View {
         switch currentStep {
-        case .permissions:
+        case .welcomePermissions:
             PermissionDemo(isGranted: hasAccessibilityPermission)
         case .macTiling:
             MacTilingDemo(enabled: macTilingOptions)
-        case .shortcuts:
-            ShortcutsDemo(focusRight: shortcuts.focusRight, focusDown: shortcuts.focusDown, swapLeft: shortcuts.swapLeft)
-                .frame(maxWidth: 340)
-        case .tryIt:
-            WindowSwitcherDemo(shortcut: shortcuts.switcher)
         default:
             EmptyView()
         }
@@ -134,27 +142,44 @@ struct OnboardingView: View {
     @ViewBuilder
     private var stepContent: some View {
         switch currentStep {
-        case .welcome:
-            WelcomeStepView()
-        case .permissions:
-            PermissionsStepView(
+        case .welcomePermissions:
+            WelcomeAccessibilityStepView(
                 hasAccessibility: hasAccessibilityPermission,
-                hasScreenRecording: hasScreenRecordingPermission,
-                onRequestAccessibility: requestAccessibilityPermission,
-                onRequestScreenRecording: requestScreenRecordingPermission
+                onRequestAccessibility: requestAccessibilityPermission
+            )
+        case .setup:
+            AutoTunedModeStepView(
+                selection: $chosenMode,
+                hovered: $hoveredMode,
+                maxWindows: $autoTilingMaxWindows,
+                suggestedMaxWindows: Self.suggestedMaxWindows(),
+                overlayShortcut: shortcuts.overlay,
+                autoTuneSummary: dominantProfile.autoTuneSummary(
+                    screenCount: appState.screenManager.screenCount,
+                    desktopCount: appState.desktopCountOnActiveScreen
+                )
             )
         case .macTiling:
             MacTilingStepView(enabled: macTilingOptions, onOpenSettings: { MacOSTiling.openSettings() })
-        case .mode:
-            ModeStepView(selection: $chosenMode, hovered: $hoveredMode, maxWindows: $autoTilingMaxWindows, suggestedMaxWindows: Self.suggestedMaxWindows(), overlayShortcut: shortcuts.overlay)
-        case .desktopsBar:
-            DesktopsBarStepView()
-        case .workspaces:
-            WorkspacesStepView()
-        case .shortcuts:
-            ShortcutsStepView(shortcuts: shortcuts, mode: chosenMode)
-        case .tryIt:
-            TryItStepView(mode: chosenMode, shortcuts: shortcuts, completed: completedTasks)
+        case .quickStart:
+            QuickStartStepView(
+                mode: chosenMode,
+                didArrange: $didArrangeDuringOnboarding,
+                onArrange: {
+                    applyAutoTilingPreferencesIfNeeded()
+                    let arranged = appState.arrangeWindowsForFirstRun(mode: chosenMode)
+                    if arranged {
+                        didUndoArrange = false
+                    }
+                    appState.defaultModeForNewSpaces = chosenMode
+                    return arranged
+                },
+                onUndo: {
+                    appState.undoFirstRunArrange()
+                    didArrangeDuringOnboarding = false
+                    didUndoArrange = true
+                }
+            )
         }
     }
 
@@ -170,45 +195,51 @@ struct OnboardingView: View {
     // MARK: - Navigation
 
     private var navigation: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             progressDots
 
             Spacer()
 
-            if currentStep == .mode {
-                Button("Decide Later") {
-                    chosenMode = nil
-                    goForward()
+            if currentStep == .macTiling && !macTilingOptions.isEmpty {
+                Button("Skip for Now", action: goForward)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.68))
+                    .padding(.horizontal, 8)
+            }
+
+            if currentStep == .quickStart {
+                Button("Done") {
+                    finishOnboardingWithoutTour()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.68))
+                .padding(.horizontal, 8)
             }
 
-            if currentStep == .tryIt {
-                Button("Skip for Now", action: onComplete)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
-
-            if currentStep != .welcome {
+            if currentStep != .welcomePermissions {
                 Button("Back", action: goBack)
+                    .buttonStyle(WindowFlowSecondaryButtonStyle())
                     .keyboardShortcut(.leftArrow, modifiers: [])
             }
 
             Button(primaryTitle, action: primaryAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(WindowFlowPrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canProceed)
         }
-        .controlSize(.large)
     }
 
     private var progressDots: some View {
         HStack(spacing: 6) {
             ForEach(steps) { step in
                 Capsule()
-                    .fill(step == currentStep ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(step.rawValue < currentStep.rawValue ? 0.35 : 0.15)))
-                    .frame(width: step == currentStep ? 18 : 6, height: 6)
+                    .fill(step == currentStep
+                          ? Color.white
+                          : Color.white.opacity(step.rawValue < currentStep.rawValue ? 0.50 : 0.22))
+                    .frame(width: step == currentStep ? 20 : 6, height: 6)
+                    .shadow(color: step == currentStep ? Color.white.opacity(0.4) : .clear, radius: 4)
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: currentStep)
@@ -218,33 +249,57 @@ struct OnboardingView: View {
 
     private var primaryTitle: String {
         switch currentStep {
-        case .welcome: return "Get Started"
-        case .tryIt: return "Open Setup Guide"
+        case .welcomePermissions: return hasAccessibilityPermission ? "Continue" : "Allow Accessibility…"
+        case .quickStart: return "Start Short Tour"
         default: return "Continue"
         }
     }
 
     private var canProceed: Bool {
-        switch currentStep {
-        case .permissions: return hasAccessibilityPermission
-        case .mode: return chosenMode != nil
-        default: return true
-        }
+        true
     }
 
     private func primaryAction() {
         switch currentStep {
-        case .mode:
-            applyChosenMode()
-            goForward()
-        case .tryIt:
-            if let onOpenSetupGuide {
-                onOpenSetupGuide()
+        case .welcomePermissions:
+            if hasAccessibilityPermission {
+                goForward()
             } else {
-                onComplete()
+                requestAccessibilityPermission()
             }
-        default:
+        case .setup:
+            // Wait until Quick Start (Arrange Now / Start Short Tour / Done) to switch the active
+            // desktop's mode so tiling doesn't raise user windows on top of onboarding mid-flow.
             goForward()
+        case .macTiling:
+            goForward()
+        case .quickStart:
+            startShortTour()
+        }
+    }
+
+    private func finishOnboardingWithoutTour() {
+        applyAutoTilingPreferencesIfNeeded()
+        if !didArrangeDuringOnboarding && !didUndoArrange {
+            applyChosenModeToAllScreens()
+        }
+        appState.defaultModeForNewSpaces = chosenMode
+        onComplete()
+    }
+
+    private func startShortTour() {
+        applyAutoTilingPreferencesIfNeeded()
+        // For Drag to Snap, activate immediately (it never moves existing windows).
+        // For Manual / Auto-tiling, if the user didn't click Arrange Now yet, the tour's own
+        // first task ("Arrange your open windows") activates it on demand with Undo support.
+        if chosenMode == .dragSnap || didArrangeDuringOnboarding {
+            applyChosenModeToAllScreens()
+        }
+        appState.defaultModeForNewSpaces = chosenMode
+        if let onStartTour {
+            onStartTour(chosenMode, didArrangeDuringOnboarding)
+        } else {
+            onComplete()
         }
     }
 
@@ -265,34 +320,37 @@ struct OnboardingView: View {
         debugLog("Onboarding", "macOS tiling options on: \(options.map(\.rawValue))")
     }
 
-    private func markDone(_ task: OnboardingTask) {
-        guard currentStep == .tryIt else { return }
-        completedTasks.insert(task)
-    }
-
     // MARK: - Mode
 
-    /// Makes the choice the default for every desktop and turns it on for the current one.
-    /// Screens already in this mode are left alone, so their slots aren't cleared.
-    private func applyChosenMode() {
-        guard let mode = chosenMode else { return }
-        if mode == .autoTiling, appState.autoTilingPreferences.maxWindows != autoTilingMaxWindows {
+    /// Saves Auto-tiling limits without mutating `defaultModeForNewSpaces` before screens are activated.
+    private func applyAutoTilingPreferencesIfNeeded() {
+        let mode = chosenMode
+        if mode == .autoTiling {
+            let dominant = DisplayProfile.dominant(for: appState.screenManager.allScreens())
             var prefs = appState.autoTilingPreferences
             prefs.maxWindows = autoTilingMaxWindows
-            appState.autoTilingPreferences = prefs
-            debugLog("Onboarding", "Auto Tiling windows on screen: \(autoTilingMaxWindows)")
-        }
-        appState.defaultModeForNewSpaces = mode
-        for screen in appState.screenManager.allScreens() where appState.mode(for: screen) != mode {
-            appState.setMode(mode, for: screen)
+            if !appState.hasCompletedOnboarding {
+                prefs.templateFor1Window = dominant.suggestedSingleWindowTemplateID
+            }
+            if prefs != appState.autoTilingPreferences {
+                appState.autoTilingPreferences = prefs
+                debugLog("Onboarding", "Auto Tiling windows on screen: \(autoTilingMaxWindows)")
+            }
+            appState.applyPerScreenAutoTilingOverrides(dominantMaxWindows: autoTilingMaxWindows)
         }
         debugLog("Onboarding", "Chose mode \(mode.rawValue)")
     }
 
-    /// Five windows put the side slots at a fifth of the screen width, too narrow for most apps below 2560 pt
+    /// Ensures the chosen mode is explicitly configured and its service is running on every screen.
+    private func applyChosenModeToAllScreens() {
+        let mode = chosenMode
+        for screen in appState.screenManager.allScreens() {
+            appState.ensureModeActive(mode, on: screen)
+        }
+    }
+
     static func suggestedMaxWindows() -> Int {
-        let widest = NSScreen.screens.map(\.frame.width).max() ?? 0
-        return widest >= 2560 ? 5 : 4
+        DisplayProfile.dominant(for: NSScreen.screens).suggestedMaxWindows
     }
 
     // MARK: - Permissions
@@ -300,10 +358,12 @@ struct OnboardingView: View {
     private func checkPermissions() {
         let hadAccessibility = hasAccessibilityPermission
         hasAccessibilityPermission = AXIsProcessTrusted()
-        hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
 
-        if !hadAccessibility && hasAccessibilityPermission && currentStep == .permissions {
-            NSApp.activate()
+        if !hadAccessibility && hasAccessibilityPermission {
+            appState.refreshAccessibilityPermission()
+            if currentStep == .welcomePermissions {
+                NSApp.activate()
+            }
         }
     }
 
@@ -315,15 +375,6 @@ struct OnboardingView: View {
             didAskAccessibility = true
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
-        }
-    }
-
-    private func requestScreenRecordingPermission() {
-        if didAskScreenRecording {
-            openPrivacySettings("Privacy_ScreenCapture")
-        } else {
-            didAskScreenRecording = true
-            _ = CGRequestScreenCaptureAccess()
         }
     }
 

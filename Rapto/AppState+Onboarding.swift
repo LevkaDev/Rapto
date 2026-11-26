@@ -18,6 +18,8 @@ extension Notification.Name {
 extension AppState {
     // MARK: - Onboarding
 
+    static let firstOnboardingCompletedAtKey = "firstOnboardingCompletedAt"
+
     func showOnboarding() {
         if isOnboardingVisible {
             OnboardingWindowController.shared.show(appState: self)
@@ -25,10 +27,206 @@ extension AppState {
         isOnboardingVisible = true
     }
 
-    func completeOnboarding() {
+    func completeOnboarding(launchingTour: Bool = false) {
         hasCompletedOnboarding = true
+        if UserDefaults.standard.object(forKey: Self.firstOnboardingCompletedAtKey) == nil {
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.firstOnboardingCompletedAtKey)
+        }
         isOnboardingVisible = false
-        debugLog("AppState", " Onboarding completed")
+        debugLog("AppState", " Onboarding completed (launchingTour=\(launchingTour))")
+        if !launchingTour {
+            closeTourSandboxWindows()
+            clearFirstRunArrangeUndo()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.showNotchDesktopsBarHintIfNeeded()
+            }
+        }
+    }
+
+    // MARK: - First-Run Arrange, Undo & Interactive Tour Helpers
+
+    /// True when at least one connected screen hides the Desktops Bar under its notch.
+    var hasNotchedHoverBar: Bool {
+        showsSpaceBar
+            && spaceBarPresentation != .always
+            && screenManager.allScreens().contains { spaceBarController.notchAnchor(on: $0) != nil }
+    }
+
+    /// Number of regular macOS desktops currently on `screen`.
+    func desktopCount(on screen: NSScreen) -> Int {
+        let displayID = screenManager.displayIdentifier(for: screen)
+        if let display = spaceBarController.displays.first(where: { $0.id == displayID }) {
+            return max(1, display.spaces.filter { !$0.isFullScreen }.count)
+        }
+        return 1
+    }
+
+    /// Number of regular macOS desktops currently on the active screen.
+    var desktopCountOnActiveScreen: Int {
+        desktopCount(on: screenManager.activeScreen())
+    }
+
+    /// Timestamp when onboarding was first completed on this Mac, or nil for older installs.
+    var firstOnboardingCompletedAt: Date? {
+        guard let timestamp = UserDefaults.standard.object(forKey: Self.firstOnboardingCompletedAtKey) as? Double,
+              timestamp > 0 else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: timestamp)
+    }
+
+    /// Movable, tilable windows currently visible on `screen` (including active tour sample windows).
+    func eligibleWindowsForFirstArrange(on screen: NSScreen) -> [WindowInfo] {
+        let all = windowManager.enumerateWindows()
+        let onScreen = filterWindowsOnScreen(all, screen: screen)
+        let minSize = WindowManager.minimumTilableSize
+        return onScreen.filter { window in
+            guard window.frame.width >= minSize && window.frame.height >= minSize else { return false }
+            return WindowClassifier.shared.isTilable(window)
+        }
+    }
+
+    /// Snapshots the current positions of open windows on the active screen and neatly lays them out
+    /// so new users see immediate value during first-run setup, with one-click Undo.
+    @discardableResult
+    func arrangeWindowsForFirstRun(mode: TilingMode) -> Bool {
+        let screen = screenManager.activeScreen()
+        let screenID = screenManager.identifier(for: screen)
+        let windows = eligibleWindowsForFirstArrange(on: screen)
+        guard !windows.isEmpty else { return false }
+
+        if preArrangeWindowFrames.isEmpty {
+            preArrangeScreenID = screenID
+            preArrangeScreenMode = self.mode(for: screen)
+            for window in windows {
+                preArrangeWindowFrames[window.windowID] = window.frame
+            }
+        }
+
+        let effectiveMode: TilingMode = (mode == .none) ? .dragSnap : mode
+        switch effectiveMode {
+        case .autoTiling:
+            if autoTilingService?.isActive(forScreenID: screenID) == true, self.mode(for: screen) == .autoTiling {
+                autoTilingService?.redistributeNow(forScreenID: screenID)
+            } else {
+                setMode(.autoTiling, for: screen)
+            }
+        case .manualAssignment:
+            ensureModeActive(.manualAssignment, on: screen)
+            if !layoutManager.state(forScreenID: screenID).isActive {
+                let template = DisplayProfile.forScreen(screen).suggestedManualTemplate
+                applyTemplateToScreen(template: template, screen: screen)
+            }
+        case .dragSnap, .none:
+            ensureModeActive(.dragSnap, on: screen)
+            let profile = DisplayProfile.forScreen(screen)
+            let template: GridTemplate = windows.count == 1
+                ? PredefinedTemplates.full
+                : (windows.count == 2 ? PredefinedTemplates.halvesVertical : profile.suggestedManualTemplate)
+            let visible = screenManager.visibleFrame(for: screen)
+            let zones = template.zones.sorted { $0.fillOrder < $1.fillOrder }
+            for (index, window) in windows.prefix(zones.count).enumerated() {
+                let appKitFrame = screenManager.calculateAbsoluteFrame(relativeFrame: zones[index].relativeFrame, in: visible)
+                let cgFrame = screenManager.convertToCGCoordinates(frame: appKitFrame, for: screen)
+                _ = accessibilityService.setWindowFrame(window, frame: cgFrame)
+            }
+        }
+
+        hasUndoableFirstArrange = !preArrangeWindowFrames.isEmpty
+        keepOnboardingInFrontIfVisible()
+        return true
+    }
+
+    /// Restores every window moved by `arrangeWindowsForFirstRun` to its exact pre-arrange frame,
+    /// temporarily disarming tiling/snap-back on that screen so windows stay where put.
+    func undoFirstRunArrange() {
+        guard !preArrangeWindowFrames.isEmpty else { return }
+        let saved = preArrangeWindowFrames
+        let savedScreenID = preArrangeScreenID
+        let savedMode = preArrangeScreenMode
+        clearFirstRunArrangeUndo()
+
+        if let savedScreenID, let screen = screenManager.screen(for: savedScreenID) {
+            if let savedMode, savedMode != self.mode(for: screen) {
+                setMode(savedMode, for: screen)
+            }
+            switch self.mode(for: screen) {
+            case .autoTiling:
+                autoTilingService?.stop(forScreenID: savedScreenID)
+            case .manualAssignment:
+                snapBackService?.stop(forScreenID: savedScreenID)
+                layoutManager.clearLayout(forScreenID: savedScreenID)
+                groupIndicatorManager?.updateIndicators()
+            case .dragSnap, .none:
+                break
+            }
+        }
+
+        let current = windowManager.enumerateWindows()
+        for (windowID, frame) in saved {
+            guard let window = current.first(where: { $0.windowID == windowID }) else { continue }
+            _ = accessibilityService.setWindowFrame(window, frame: frame)
+        }
+        keepOnboardingInFrontIfVisible()
+    }
+
+    func clearFirstRunArrangeUndo() {
+        preArrangeWindowFrames.removeAll()
+        preArrangeScreenID = nil
+        preArrangeScreenMode = nil
+        hasUndoableFirstArrange = false
+    }
+
+    /// Keeps the onboarding window above newly raised apps (such as Electron windows raised asynchronously).
+    private func keepOnboardingInFrontIfVisible() {
+        guard isOnboardingVisible else { return }
+        OnboardingWindowController.shared.bringToFront()
+        for delay in [0.15, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard self?.isOnboardingVisible == true else { return }
+                OnboardingWindowController.shared.bringToFront()
+            }
+        }
+    }
+
+    func openTourSandboxWindows() {
+        TourSandboxWindows.shared.openSamplePair(on: screenManager.activeScreen())
+        keepOnboardingInFrontIfVisible()
+    }
+
+    func closeTourSandboxWindows() {
+        TourSandboxWindows.shared.closeAll()
+    }
+
+    /// True when at least one non-Rapto app window exists on the active display
+    /// (needed so the Desktops Bar has an app icon to drag and Window Flow has real windows).
+    var hasRealAppWindowsOnActiveScreen: Bool {
+        let screen = screenManager.activeScreen()
+        let displayID = screenManager.displayIdentifier(for: screen)
+        if let display = spaceBarController.displays.first(where: { $0.id == displayID }),
+           display.spaces.contains(where: { !$0.glyphs.isEmpty }) {
+            return true
+        }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        return eligibleWindowsForFirstArrange(on: screen).contains { $0.ownerPID != ownPID }
+    }
+
+    /// Creates a new macOS desktop on the active screen (used by Part 2 of the interactive tour).
+    func addDesktopOnActiveScreen() {
+        let displayID = screenManager.displayIdentifier(for: screenManager.activeScreen())
+        guard !displayID.isEmpty else { return }
+        spaceBarController.addDesktop(displayID: displayID)
+    }
+
+    /// Opens a Finder window on the current desktop so the user immediately has a real app
+    /// to drag in the Desktops Bar and view in Window Flow during the tour.
+    func openSampleFinderWindowForTour() {
+        NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    /// Opens Window Flow directly from Part 2 of the interactive tour.
+    func openWindowFlowFromTour() {
+        windowFlow.toggle()
     }
 
     func resetOnboardingForDebug() {
@@ -50,17 +248,19 @@ extension AppState {
 
     /// Applies one of the three starter profiles from Settings → Guide:
     /// sets the mode on all connected displays and for newly created desktops,
-    /// sets 4 px window & screen-edge gaps, and configures mode-appropriate border defaults.
+    /// tunes Auto-tiling for the connected displays, sets 4 px window & screen-edge gaps,
+    /// and configures mode-appropriate border defaults.
     func applyStarterProfile(_ mode: TilingMode) {
         guard mode != .none else { return }
 
         if mode == .autoTiling {
-            let suggested = OnboardingView.suggestedMaxWindows()
-            if autoTilingPreferences.maxWindows != suggested {
-                var prefs = autoTilingPreferences
-                prefs.maxWindows = suggested
-                autoTilingPreferences = prefs
-            }
+            let screens = screenManager.allScreens()
+            let dominant = DisplayProfile.dominant(for: screens)
+            var prefs = autoTilingPreferences
+            prefs.maxWindows = dominant.suggestedMaxWindows
+            prefs.templateFor1Window = dominant.suggestedSingleWindowTemplateID
+            autoTilingPreferences = prefs
+            applyPerScreenAutoTilingOverrides(dominantMaxWindows: dominant.suggestedMaxWindows)
         }
 
         setWindowGap(Self.defaultGap)
@@ -76,12 +276,26 @@ extension AppState {
             break
         }
 
-        defaultModeForNewSpaces = mode
-        for screen in screenManager.allScreens() where self.mode(for: screen) != mode {
-            setMode(mode, for: screen)
+        for screen in screenManager.allScreens() {
+            ensureModeActive(mode, on: screen)
         }
+        defaultModeForNewSpaces = mode
         updateHighlightForCurrentMode()
         debugLog("AppState", " Applied starter profile: \(mode.rawValue)")
+    }
+
+    /// In multi-monitor setups (e.g. a MacBook paired with a wide monitor), gives narrower screens
+    /// their own smaller Auto-tiling window limit so windows aren't crushed on the smaller display.
+    func applyPerScreenAutoTilingOverrides(dominantMaxWindows: Int) {
+        let screens = screenManager.allScreens()
+        guard screens.count > 1 else { return }
+        for screen in screens {
+            let screenMax = DisplayProfile.forScreen(screen).suggestedMaxWindows
+            let screenID = screenManager.identifier(for: screen)
+            if screenMax < dominantMaxWindows && autoTilingMaxWindows(forScreenID: screenID) == nil {
+                setAutoTilingMaxWindows(screenMax, forScreenID: screenID)
+            }
+        }
     }
 
     /// Hides a suggested app chip in Guide's Smart App Scanner on this Mac.
@@ -138,7 +352,14 @@ extension AppState {
     func didSnapWindowBack(cgSlotFrame: CGRect, screenID: String) {
         oneTimeHints.showOnce(
             .snapBack,
-            content: { OneTimeHintCopy.snapBack },
+            content: { [weak self] in
+                guard let self, let screen = self.screenManager.screen(for: screenID) else {
+                    return OneTimeHintCopy.snapBack
+                }
+                return self.mode(for: screen) == .autoTiling
+                    ? OneTimeHintCopy.autoTilingSnapBack
+                    : OneTimeHintCopy.snapBack
+            },
             placement: { [weak self] in
                 guard let self, let screen = self.screenManager.screen(for: screenID) else { return nil }
                 let appKitSlotRect = self.screenManager.convertFromCGCoordinates(frame: cgSlotFrame, for: screen)
@@ -148,7 +369,8 @@ extension AppState {
                 guard let self,
                       !self.isOnboardingVisible,
                       let screen = self.screenManager.screen(for: screenID) else { return false }
-                return self.mode(for: screen) == .manualAssignment
+                let activeMode = self.mode(for: screen)
+                return (activeMode == .manualAssignment || activeMode == .autoTiling)
                     && self.layoutManager.state(forScreenID: screenID).isActive
             }
         )
@@ -172,6 +394,159 @@ extension AppState {
                 guard let self, !self.isOnboardingVisible, !self.groupIndicatorsHidden else { return false }
                 return self.layoutManager.state(forScreenID: screenID).slots.contains(where: \.hasGroup)
             }
+        )
+    }
+
+    func didRevealNotchDesktopsBar() {
+        oneTimeHints.markCompleted(.notchDesktopsBar)
+    }
+
+    /// Progressive discovery: when a user switches across multiple desktops without having used the
+    /// Desktops Bar yet, briefly point out that the bar switches desktops and moves apps across them.
+    func maybeShowSecondDesktopHint(on screen: NSScreen) {
+        guard hasCompletedOnboarding,
+              !isOnboardingVisible,
+              !isInteractiveTourActive,
+              !isPaused,
+              showsHints,
+              oneTimeHints.hasRemaining(.secondDesktopCreated),
+              ProgressiveDiscoveryPolicy.shouldSuggestDesktopsBar(
+                  desktopCount: desktopCount(on: screen),
+                  showsSpaceBar: showsSpaceBar
+              ) else {
+            return
+        }
+        let screenID = screenManager.identifier(for: screen)
+        oneTimeHints.showOnce(
+            .secondDesktopCreated,
+            content: { OneTimeHintCopy.secondDesktopCreated },
+            placement: { [weak self] in
+                guard let self, let resolvedScreen = self.screenManager.screen(for: screenID) else { return nil }
+                return (.below(self.spaceBarController.barAnchor(on: resolvedScreen)), resolvedScreen)
+            },
+            stillValid: { [weak self] in
+                guard let self,
+                      !self.isOnboardingVisible,
+                      !self.isInteractiveTourActive,
+                      !self.isPaused,
+                      let resolvedScreen = self.screenManager.screen(for: screenID) else { return false }
+                return ProgressiveDiscoveryPolicy.shouldSuggestDesktopsBar(
+                    desktopCount: self.desktopCount(on: resolvedScreen),
+                    showsSpaceBar: self.showsSpaceBar
+                )
+            },
+            autoHideAfter: 8
+        )
+    }
+
+    /// Progressive discovery: introduces Window Flow once the screen gets busy (4+ windows) and
+    /// Workspaces after a couple of days once the user regularly keeps 3+ apps open together.
+    func maybeShowWindowFlowOrWorkspacesHint(on screen: NSScreen) {
+        guard hasCompletedOnboarding,
+              !isOnboardingVisible,
+              !isInteractiveTourActive,
+              !isPaused,
+              showsHints,
+              oneTimeHints.hasRemaining(.manyWindowsFlow) || oneTimeHints.hasRemaining(.workspacesTip) else {
+            return
+        }
+
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let realWindows = eligibleWindowsForFirstArrange(on: screen).filter { $0.ownerPID != ownPID }
+        let screenID = screenManager.identifier(for: screen)
+
+        if oneTimeHints.hasRemaining(.manyWindowsFlow),
+           ProgressiveDiscoveryPolicy.shouldSuggestWindowFlow(tilableWindowCount: realWindows.count) {
+            oneTimeHints.showOnce(
+                .manyWindowsFlow,
+                content: { [weak self] in
+                    OneTimeHintCopy.manyWindowsFlow(shortcut: self?.shortcutDisplayString(for: .openWindowFlow))
+                },
+                placement: { [weak self] in
+                    guard let self, let resolvedScreen = self.screenManager.screen(for: screenID) else { return nil }
+                    return (.below(self.spaceBarController.barAnchor(on: resolvedScreen)), resolvedScreen)
+                },
+                stillValid: { [weak self] in
+                    guard let self,
+                          !self.isOnboardingVisible,
+                          !self.isInteractiveTourActive,
+                          !self.isPaused,
+                          !self.isWindowFlowOpen else { return false }
+                    return true
+                },
+                autoHideAfter: 8
+            )
+            return
+        }
+
+        let distinctApps = Set(realWindows.map { $0.bundleIdentifier ?? $0.ownerName })
+        if oneTimeHints.hasRemaining(.workspacesTip),
+           ProgressiveDiscoveryPolicy.shouldSuggestWorkspaces(
+               distinctAppCount: distinctApps.count,
+               savedWorkspaceCount: workspaces.count,
+               completedOnboardingAt: firstOnboardingCompletedAt
+           ) {
+            oneTimeHints.showOnce(
+                .workspacesTip,
+                content: { OneTimeHintCopy.workspacesTip },
+                placement: { [weak self] in
+                    guard let self, let resolvedScreen = self.screenManager.screen(for: screenID) else { return nil }
+                    return (.below(self.spaceBarController.barAnchor(on: resolvedScreen)), resolvedScreen)
+                },
+                stillValid: { [weak self] in
+                    guard let self,
+                          !self.isOnboardingVisible,
+                          !self.isInteractiveTourActive,
+                          !self.isPaused,
+                          self.workspaces.isEmpty else { return false }
+                    return true
+                },
+                autoHideAfter: 8
+            )
+        }
+    }
+
+    /// Points to the notch on MacBooks where the Desktops Bar is hidden until hovered (max 2 times,
+    /// retired immediately once the user hovers the notch and reveals the bar).
+    func showNotchDesktopsBarHintIfNeeded(force: Bool = false) {
+        guard !isOnboardingVisible, showsSpaceBar, spaceBarPresentation != .always else { return }
+        let orderedScreens = [screenManager.activeScreen()] + screenManager.allScreens().filter { $0 != screenManager.activeScreen() }
+        guard let targetScreen = orderedScreens.first(where: { spaceBarController.notchAnchor(on: $0) != nil }) else {
+            return
+        }
+        let screenID = screenManager.identifier(for: targetScreen)
+        if force {
+            oneTimeHints.showImmediate(
+                .notchDesktopsBar,
+                content: OneTimeHintCopy.notchDesktopsBar,
+                placement: { [weak self] in
+                    guard let self,
+                          let screen = self.screenManager.screen(for: screenID),
+                          let notchRect = self.spaceBarController.notchAnchor(on: screen) else { return nil }
+                    return (.belowNotch(notchRect), screen)
+                },
+                autoHideAfter: 16
+            )
+            return
+        }
+        oneTimeHints.showOnce(
+            .notchDesktopsBar,
+            content: { OneTimeHintCopy.notchDesktopsBar },
+            placement: { [weak self] in
+                guard let self,
+                      let screen = self.screenManager.screen(for: screenID),
+                      let notchRect = self.spaceBarController.notchAnchor(on: screen) else { return nil }
+                return (.belowNotch(notchRect), screen)
+            },
+            stillValid: { [weak self] in
+                guard let self,
+                      !self.isOnboardingVisible,
+                      self.showsSpaceBar,
+                      self.spaceBarPresentation != .always,
+                      let screen = self.screenManager.screen(for: screenID) else { return false }
+                return self.spaceBarController.notchAnchor(on: screen) != nil
+            },
+            autoHideAfter: 12
         )
     }
 
@@ -203,7 +578,7 @@ extension AppState {
     /// Number of Fine-Tune checklist items (out of 4) currently satisfied in Settings → Guide.
     var setupGuideCompletedStepsCount: Int {
         var count = 0
-        if !passthroughApps.isEmpty || ignoredApps != Self.defaultIgnoredApps || !dismissedAppSuggestions.isEmpty {
+        if !passthroughApps.isEmpty || ignoredApps != Self.defaultIgnoredApps || !dismissedAppSuggestions.isEmpty || detectedNoPassthroughApps {
             count += 1
         }
         if defaultModeForNewSpaces != .none {

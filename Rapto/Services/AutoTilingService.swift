@@ -99,6 +99,9 @@ class AutoTilingService: ObservableObject {
     // MARK: - Callbacks
     
     var onWindowsRedistributed: ((_ windows: [WindowInfo]) -> Void)?
+
+    /// Called after one or more windows snapped back to their Auto-tiling slot (CG slot frame, screenID).
+    var onWindowSnappedBack: ((CGRect, String) -> Void)?
     
     var isFollowAppToMonitorEnabled: (() -> Bool)? = nil
 
@@ -835,6 +838,7 @@ class AutoTilingService: ObservableObject {
         let eligibleWindows = filterEligibleWindows(windows)
         
         var crossScreenMoves: [(window: WindowInfo, fromScreenID: String, toScreenID: String)] = []
+        var firstSnappedSlot: (frame: CGRect, screenID: String)?
         
         for screenID in activeScreens {
             let screenState = layoutManager.state(forScreenID: screenID)
@@ -879,9 +883,16 @@ class AutoTilingService: ObservableObject {
                     let success = accessibilityService.setWindowFrame(window, frame: targetFrame)
                     if success {
                         layoutManager.updateWindowFrame(window.windowID, newFrame: accessibilityService.expectedFrame(targetFrame, windowID: window.windowID), forScreenID: screenID)
+                        if firstSnappedSlot == nil {
+                            firstSnappedSlot = (targetFrame, screenID)
+                        }
                     }
                 }
             }
+        }
+
+        if let snapped = firstSnappedSlot {
+            onWindowSnappedBack?(snapped.frame, snapped.screenID)
         }
         
         for (window, fromScreenID, toScreenID) in crossScreenMoves {

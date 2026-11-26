@@ -53,32 +53,46 @@ private func place(_ unit: CGRect, in size: CGSize, gap: CGFloat = 3) -> CGRect 
 
 // MARK: - Stage
 
-/// Dark backdrop for the demos: a clip fills it edge to edge, a live demo sits inset.
-/// The field colour matches the clips, so both kinds of step look the same.
+/// Sculpted floating Window Flow glass viewport for onboarding clips and live demos.
 struct OnboardingStage<Content: View>: View {
     var clip: OnboardingClip?
     @ViewBuilder let content: Content
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
         ZStack {
-            OnboardingPalette.field
             if let clip {
+                OnboardingPalette.field
                 OnboardingClipView(clip: clip)
                     .id(clip)
                     .transition(.opacity)
             } else {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.08, green: 0.11, blue: 0.18).opacity(0.84),
+                        Color(red: 0.04, green: 0.06, blue: 0.11).opacity(0.92)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
                 content
-                    .padding(.top, 28)
-                    .padding(.bottom, 20)
-                    .padding(.horizontal, 40)
+                    .padding(.vertical, 18)
+                    .padding(.horizontal, 32)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: clip)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.white.opacity(0.14))
-                .frame(height: 0.5)
+        .clipShape(shape)
+        .overlay {
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [.white.opacity(0.32), .white.opacity(0.08)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                lineWidth: 1
+            )
         }
+        .shadow(color: .black.opacity(0.46), radius: 22, y: 10)
+        .animation(.easeInOut(duration: 0.25), value: clip)
         .environment(\.colorScheme, .dark)
     }
 }

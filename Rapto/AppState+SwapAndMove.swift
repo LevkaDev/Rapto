@@ -146,6 +146,7 @@ extension AppState {
             self.refreshGroupIndicatorsAfterWindowMove()
             
             self.saveLayout(forScreenID: screenID)
+            NotificationCenter.default.post(name: .raptoTourDidSwapWindows, object: nil)
         }
         
         windowSwapService?.onMovePerformed = { [weak self] movedWindowID, targetWindowID in
@@ -156,6 +157,7 @@ extension AppState {
                 self.layoutManager.moveWindowAcrossScreens(dragged, toSlotOf: target.windowID)
             }) {
                 self.finishDropAcrossScreens(changed)
+                NotificationCenter.default.post(name: .raptoTourDidGroupWindows, object: nil)
                 return
             }
             
@@ -170,6 +172,9 @@ extension AppState {
             self.refreshGroupIndicatorsAfterWindowMove()
             
             self.saveLayout(forScreenID: screenID)
+            if self.layoutManager.state(forScreenID: screenID).slots.contains(where: \.hasGroup) {
+                NotificationCenter.default.post(name: .raptoTourDidGroupWindows, object: nil)
+            }
         }
         
         windowSwapService?.isWindowLocked = { [weak self] windowID in
@@ -194,12 +199,16 @@ extension AppState {
         }
         
         autoTilingService?.onWindowsRedistributed = { [weak self] windows in
+            guard let self else { return }
             debugLog("AppState", "📢 onWindowsRedistributed callback triggered with \(windows.count) windows")
-            self?.windowResizeService?.setManagedLayout(windows: windows)
-            self?.windowHighlightService?.windowsChanged()
+            self.windowResizeService?.setManagedLayout(windows: windows)
+            self.windowHighlightService?.windowsChanged()
             // Force refresh floating group indicators after auto-tiling redistribution
             // Using forceRefresh() to ensure cache is cleared and indicators are rebuilt
-            self?.groupIndicatorManager?.forceRefresh()
+            self.groupIndicatorManager?.forceRefresh()
+            if windows.count >= 3 {
+                self.maybeShowWindowFlowOrWorkspacesHint(on: self.screenManager.activeScreen())
+            }
         }
         autoTilingService?.onWindowsLeftScreens = { [weak self] screenIDs in
             guard let self else { return }

@@ -47,10 +47,12 @@ struct RaptoApp: App {
                     appState.checkAndShowOnboardingIfNeeded()
                 }
         } label: {
-            if appState.hasAccessibilityPermission {
-                Image("MenuBarIcon")
-            } else {
+            if !appState.hasAccessibilityPermission {
                 Image(systemName: "exclamationmark.triangle.fill")
+            } else if appState.isPaused {
+                Image("MenuBarIconPaused")
+            } else {
+                Image("MenuBarIcon")
             }
         }
         .menuBarExtraStyle(.menu)
@@ -145,6 +147,17 @@ struct MenuBarView: View {
             Divider()
         }
 
+        Button {
+            appState.isPaused.toggle()
+        } label: {
+            Label(
+                appState.isPaused ? "Resume Rapto" : "Pause Rapto",
+                systemImage: appState.isPaused ? "play.fill" : "pause.fill"
+            )
+        }
+
+        Divider()
+
         Section("\(appState.spaceManager.currentSpaceDisplayName)") {
             if isMultiMonitor {
                 let screenInfoArray = appState.screenManager.allScreenInfo()
@@ -164,13 +177,25 @@ struct MenuBarView: View {
                         }
                         
                         if screenMode == .manualAssignment {
+                            let partitioned = appState.partitionedTemplates(for: screenInfo.screen)
                             Divider()
                             Menu("Layout: \(screenTemplateName)") {
-                                ForEach(appState.listedTemplates) { template in
+                                ForEach(partitioned.primary) { template in
                                     Toggle(template.name, isOn: Binding(
                                         get: { template.name == screenTemplateName },
                                         set: { _ in appState.applyTemplateToScreen(template: template, screen: screenInfo.screen) }
                                     ))
+                                }
+                                if !partitioned.ultrawide.isEmpty {
+                                    Divider()
+                                    Menu("Ultrawide") {
+                                        ForEach(partitioned.ultrawide) { template in
+                                            Toggle(template.name, isOn: Binding(
+                                                get: { template.name == screenTemplateName },
+                                                set: { _ in appState.applyTemplateToScreen(template: template, screen: screenInfo.screen) }
+                                            ))
+                                        }
+                                    }
                                 }
                             }
                         } else if screenMode == .dragSnap {
@@ -189,10 +214,21 @@ struct MenuBarView: View {
                 }
                 
                 if appState.currentMode == .manualAssignment {
+                    let partitioned = appState.partitionedTemplates(for: appState.screenManager.activeScreen())
                     Menu("Layout: \(currentTemplateName)") {
-                        ForEach(appState.listedTemplates) { template in
+                        ForEach(partitioned.primary) { template in
                             Button(template.name) {
                                 appState.applyTemplateDirectly(templateID: template.id)
+                            }
+                        }
+                        if !partitioned.ultrawide.isEmpty {
+                            Divider()
+                            Menu("Ultrawide") {
+                                ForEach(partitioned.ultrawide) { template in
+                                    Button(template.name) {
+                                        appState.applyTemplateDirectly(templateID: template.id)
+                                    }
+                                }
                             }
                         }
                     }
@@ -205,6 +241,16 @@ struct MenuBarView: View {
         Divider()
         
         Section("Quick Actions") {
+            Button {
+                appState.windowFlow.toggle()
+            } label: {
+                let shortcut = appState.shortcutDisplayString(for: .openWindowFlow)
+                Label(
+                    shortcut.map { "Open Window Flow (\($0))" } ?? "Open Window Flow",
+                    systemImage: "rectangle.stack"
+                )
+            }
+
             Button("Open Overlay") {
                 appState.toggleOverlay()
             }

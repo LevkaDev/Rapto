@@ -20,14 +20,128 @@ struct OneTimeHintsTests {
         return (defaults, suiteName)
     }
 
-    @Test("HintID stored raw values and 10-display threshold never change unexpectedly")
+    @Test("HintID stored raw values and display thresholds never change unexpectedly")
     func hintIDRawValuesAreStable() {
         #expect(HintID.manualNeedsLayout.rawValue == "manualNeedsLayout")
         #expect(HintID.snapBack.rawValue == "snapBack")
         #expect(HintID.groupBadge.rawValue == "groupBadge")
         #expect(HintID.focusMode.rawValue == "focusMode")
-        #expect(HintID.allCases.count == 4)
+        #expect(HintID.notchDesktopsBar.rawValue == "notchDesktopsBar")
+        #expect(HintID.secondDesktopCreated.rawValue == "secondDesktopCreated")
+        #expect(HintID.manyWindowsFlow.rawValue == "manyWindowsFlow")
+        #expect(HintID.workspacesTip.rawValue == "workspacesTip")
+        #expect(HintID.allCases.count == 8)
         #expect(OneTimeHintScheduler.maxDisplays == 10)
+        #expect(HintID.notchDesktopsBar.maxDisplays == 2)
+        #expect(HintID.secondDesktopCreated.maxDisplays == 2)
+        #expect(HintID.manyWindowsFlow.maxDisplays == 2)
+        #expect(HintID.workspacesTip.maxDisplays == 2)
+    }
+
+    @Test("Progressive discovery policy gates Desktops Bar, Window Flow, and Workspaces tips cleanly")
+    func progressiveDiscoveryPolicyRules() {
+        #expect(!ProgressiveDiscoveryPolicy.shouldSuggestDesktopsBar(desktopCount: 1, showsSpaceBar: true))
+        #expect(!ProgressiveDiscoveryPolicy.shouldSuggestDesktopsBar(desktopCount: 2, showsSpaceBar: false))
+        #expect(ProgressiveDiscoveryPolicy.shouldSuggestDesktopsBar(desktopCount: 2, showsSpaceBar: true))
+
+        #expect(!ProgressiveDiscoveryPolicy.shouldSuggestWindowFlow(tilableWindowCount: 3))
+        #expect(ProgressiveDiscoveryPolicy.shouldSuggestWindowFlow(tilableWindowCount: 4))
+
+        let start = Date(timeIntervalSince1970: 10_000)
+        let afterOneDay = start.addingTimeInterval(24 * 3600)
+        let afterTwoDays = start.addingTimeInterval(48 * 3600)
+
+        #expect(!ProgressiveDiscoveryPolicy.shouldSuggestWorkspaces(
+            distinctAppCount: 3, savedWorkspaceCount: 0, completedOnboardingAt: nil, now: afterTwoDays
+        ))
+        #expect(!ProgressiveDiscoveryPolicy.shouldSuggestWorkspaces(
+            distinctAppCount: 2, savedWorkspaceCount: 0, completedOnboardingAt: start, now: afterTwoDays
+        ))
+        #expect(!ProgressiveDiscoveryPolicy.shouldSuggestWorkspaces(
+            distinctAppCount: 4, savedWorkspaceCount: 1, completedOnboardingAt: start, now: afterTwoDays
+        ))
+        #expect(!ProgressiveDiscoveryPolicy.shouldSuggestWorkspaces(
+            distinctAppCount: 4, savedWorkspaceCount: 0, completedOnboardingAt: start, now: afterOneDay
+        ))
+        #expect(ProgressiveDiscoveryPolicy.shouldSuggestWorkspaces(
+            distinctAppCount: 3, savedWorkspaceCount: 0, completedOnboardingAt: start, now: afterTwoDays
+        ))
+    }
+
+    @Test("Progressive discovery hint cards carry clear copy and handle unbound shortcuts")
+    func progressiveDiscoveryHintCopy() {
+        #expect(OneTimeHintCopy.secondDesktopCreated == HintCardContent(
+            icon: "menubar.rectangle",
+            title: "Switch Desktops Faster",
+            detail: "Use the Desktops Bar to jump between desktops or drag apps across"
+        ))
+        #expect(OneTimeHintCopy.manyWindowsFlow(shortcut: "⌥⇥") == HintCardContent(
+            icon: "rectangle.stack.badge.play",
+            title: "Lots of Windows Open?",
+            detail: "Click the Flow button on the bar or press ⌥⇥ to browse windows"
+        ))
+        #expect(OneTimeHintCopy.manyWindowsFlow(shortcut: nil) == HintCardContent(
+            icon: "rectangle.stack.badge.play",
+            title: "Lots of Windows Open?",
+            detail: "Click the Flow button on the Desktops Bar to browse all windows in 3D"
+        ))
+        #expect(OneTimeHintCopy.workspacesTip == HintCardContent(
+            icon: "square.stack.3d.up",
+            title: "Save This Setup as a Workspace",
+            detail: "Open the Rapto menu → Workspaces to reopen these apps in one click"
+        ))
+    }
+
+    @Test("Progressive discovery hints retire early when user uses the feature")
+    func progressiveDiscoveryHintsRetireEarly() {
+        let (defaults, suiteName) = makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let scheduler = OneTimeHintScheduler(defaults: defaults)
+        for hint in [HintID.secondDesktopCreated, .manyWindowsFlow, .workspacesTip] {
+            #expect(scheduler.request(hint, showsHints: true) == .showNow(count: 1))
+            scheduler.markCompleted(hint)
+            #expect(scheduler.isExhausted(hint))
+            #expect(scheduler.request(hint, showsHints: true) == .exhausted)
+        }
+    }
+
+    @Test("Notch Desktops Bar hint caps at 2 displays and retires immediately once user reveals the bar")
+    func notchDesktopsBarLimitAndEarlyCompletion() {
+        let (defaults, suiteName) = makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let scheduler = OneTimeHintScheduler(defaults: defaults)
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .showNow(count: 1))
+        scheduler.didHideCurrentHint()
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .showNow(count: 2))
+        scheduler.didHideCurrentHint()
+        #expect(scheduler.isExhausted(.notchDesktopsBar))
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .exhausted)
+
+        // Reset and verify early completion after a single display
+        defaults.removeObject(forKey: OneTimeHintScheduler.countsDefaultsKey)
+        scheduler.resetState()
+
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .showNow(count: 1))
+        scheduler.markCompleted(.notchDesktopsBar)
+        #expect(scheduler.currentlyShowing == nil)
+        #expect(scheduler.isExhausted(.notchDesktopsBar))
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .exhausted)
+    }
+
+    @Test("Notch Desktops Bar and Auto-tiling snap-back hint cards carry expected copy")
+    func notchDesktopsBarAndAutoTilingCopy() {
+        let card = OneTimeHintCopy.notchDesktopsBar
+        #expect(card.showsUpwardPointer == true)
+        #expect(card.title == "Desktops Bar Is Up Here")
+        #expect(card.detail?.contains("notch") == true)
+
+        let autoSnapBack = OneTimeHintCopy.autoTilingSnapBack
+        #expect(autoSnapBack.showsUpwardPointer == false)
+        #expect(autoSnapBack.title == "Auto-tiling Keeps Windows in Place")
+        #expect(autoSnapBack.detail?.contains("swap") == true)
+        #expect(autoSnapBack.detail?.contains("pause") == true)
     }
 
     @Test("Scheduler shows each HintID 10 times before retiring and allows immediate repeat after hide")

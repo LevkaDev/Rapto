@@ -29,12 +29,16 @@ final class OnboardingWindowController {
         let onboardingView = OnboardingView(
             onComplete: { [weak self] in
                 self?.close()
-                appState.completeOnboarding()
+                appState.completeOnboarding(launchingTour: false)
             },
-            onOpenSetupGuide: { [weak self] in
+            onStartTour: { [weak self] mode, alreadyArranged in
                 self?.close()
-                appState.completeOnboarding()
-                SettingsWindowController.shared.showSettings(appState: appState, tab: .guide)
+                appState.completeOnboarding(launchingTour: true)
+                InteractiveTourController.shared.start(
+                    appState: appState,
+                    mode: mode,
+                    alreadyArranged: alreadyArranged
+                )
             }
         )
         .environmentObject(appState)
@@ -43,10 +47,12 @@ final class OnboardingWindowController {
         controller.sizingOptions = []
         hostingController = controller
         
-        let size = NSSize(width: 700, height: 600)
+        let size = NSSize(width: 720, height: 620)
         let newWindow = NSWindow(contentViewController: controller)
         newWindow.title = "Welcome to Rapto"
-        // The demo stage runs under the transparent title bar
+        newWindow.appearance = NSAppearance(named: .darkAqua)
+        newWindow.backgroundColor = WindowFlowThemeTokens.windowBackground
+        // The atmospheric Window Flow sky runs edge-to-edge under the transparent title bar
         newWindow.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
         newWindow.titlebarAppearsTransparent = true
         newWindow.titleVisibility = .hidden
@@ -80,6 +86,12 @@ final class OnboardingWindowController {
         NSApp.activate()
     }
     
+    func bringToFront() {
+        guard let window else { return }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
     func close() {
         window?.close()
     }

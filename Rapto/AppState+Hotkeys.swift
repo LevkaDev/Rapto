@@ -1040,6 +1040,7 @@ extension AppState {
         }
 
         activeWindowFlowBinding = preset.bindings[.openWindowFlow]
+        spaceBarController.windowFlowShortcut = activeWindowFlowBinding?.displayString
         if let openFlow = preset.bindings[.openWindowFlow] {
             hotkeyManager.registerAdditionalHotkeyWithID(
                 keyCode: openFlow.keyCode,

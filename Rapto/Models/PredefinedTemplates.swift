@@ -182,15 +182,17 @@ nonisolated enum PredefinedTemplates {
         ]
     )
     
-    static let all: [GridTemplate] = [
+    static let standard: [GridTemplate] = [
         full,
         halvesVertical,
         halvesHorizontal,
         thirdsVertical,
         onePlusTwoLeft,
         onePlusTwoRight,
-        quarters,
-        // Ultrawide templates
+        quarters
+    ]
+
+    static let ultrawide: [GridTemplate] = [
         centerFocus,
         centerSplitSidebars,
         centerWide,
@@ -199,4 +201,8 @@ nonisolated enum PredefinedTemplates {
         columns4,
         twoOneTow
     ]
+
+    static let ultrawideIDs: Set<UUID> = Set(ultrawide.map(\.id))
+
+    static let all: [GridTemplate] = standard + ultrawide
 }

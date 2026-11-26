@@ -17,6 +17,48 @@ nonisolated enum HintID: String, CaseIterable, Hashable, Sendable {
     case snapBack = "snapBack"
     case groupBadge = "groupBadge"
     case focusMode = "focusMode"
+    case notchDesktopsBar = "notchDesktopsBar"
+    case secondDesktopCreated = "secondDesktopCreated"
+    case manyWindowsFlow = "manyWindowsFlow"
+    case workspacesTip = "workspacesTip"
+
+    /// Maximum displays before this hint retires automatically.
+    var maxDisplays: Int {
+        switch self {
+        case .notchDesktopsBar, .secondDesktopCreated, .manyWindowsFlow, .workspacesTip:
+            return 2
+        default:
+            return OneTimeHintScheduler.maxDisplays
+        }
+    }
+}
+
+/// Pure eligibility rules for progressive discovery tips shown only when relevant,
+/// rather than crowding the first minute of onboarding.
+nonisolated enum ProgressiveDiscoveryPolicy {
+    static let workspacesMinimumAgeSeconds: TimeInterval = 48 * 3600
+
+    static func shouldSuggestDesktopsBar(desktopCount: Int, showsSpaceBar: Bool) -> Bool {
+        desktopCount >= 2 && showsSpaceBar
+    }
+
+    static func shouldSuggestWindowFlow(tilableWindowCount: Int) -> Bool {
+        tilableWindowCount >= 4
+    }
+
+    static func shouldSuggestWorkspaces(
+        distinctAppCount: Int,
+        savedWorkspaceCount: Int,
+        completedOnboardingAt: Date?,
+        now: Date = Date()
+    ) -> Bool {
+        guard savedWorkspaceCount == 0,
+              distinctAppCount >= 3,
+              let completedOnboardingAt else {
+            return false
+        }
+        return now.timeIntervalSince(completedOnboardingAt) >= workspacesMinimumAgeSeconds
+    }
 }
 
 /// Pure scheduling state machine for unit testing contextual tips without real timers or windows.
@@ -41,7 +83,7 @@ nonisolated final class OneTimeHintScheduler {
 
     private let defaults: UserDefaults
     private let now: () -> Date
-    private let maxDisplayCount: Int
+    private let overrideMaxDisplayCount: Int?
     private let simultaneousWindow: TimeInterval
     private let groupBadgeGap: TimeInterval
 
@@ -51,16 +93,20 @@ nonisolated final class OneTimeHintScheduler {
 
     init(
         defaults: UserDefaults = .standard,
-        maxDisplayCount: Int = OneTimeHintScheduler.maxDisplays,
+        maxDisplayCount: Int? = nil,
         simultaneousWindow: TimeInterval = OneTimeHintScheduler.simultaneousGuardWindow,
         groupBadgeGap: TimeInterval = OneTimeHintScheduler.groupBadgeRepeatGap,
         now: @escaping () -> Date = Date.init
     ) {
         self.defaults = defaults
-        self.maxDisplayCount = maxDisplayCount
+        self.overrideMaxDisplayCount = maxDisplayCount
         self.simultaneousWindow = simultaneousWindow
         self.groupBadgeGap = groupBadgeGap
         self.now = now
+    }
+
+    func maxDisplayCount(for id: HintID) -> Int {
+        overrideMaxDisplayCount ?? id.maxDisplays
     }
 
     func displayCount(for id: HintID) -> Int {
@@ -75,7 +121,25 @@ nonisolated final class OneTimeHintScheduler {
     }
 
     func isExhausted(_ id: HintID) -> Bool {
-        displayCount(for: id) >= maxDisplayCount
+        displayCount(for: id) >= maxDisplayCount(for: id)
+    }
+
+    /// Retires a hint early once the user completes the interaction it teaches (e.g., hovering the notch).
+    func markCompleted(_ id: HintID) {
+        let limit = maxDisplayCount(for: id)
+        var counts: [String: Int] = [:]
+        if let existing = defaults.dictionary(forKey: Self.countsDefaultsKey) {
+            for (key, value) in existing {
+                if let n = (value as? NSNumber)?.intValue {
+                    counts[key] = n
+                }
+            }
+        }
+        counts[id.rawValue] = max(counts[id.rawValue] ?? 0, limit)
+        defaults.set(counts, forKey: Self.countsDefaultsKey)
+        if currentlyShowing == id {
+            didHideCurrentHint()
+        }
     }
 
     /// Shows immediately on every distinct user action (replacing any older visible tip), while
@@ -86,7 +150,7 @@ nonisolated final class OneTimeHintScheduler {
             return .alreadyVisible
         }
         let currentCount = displayCount(for: id)
-        guard currentCount < maxDisplayCount else { return .exhausted }
+        guard currentCount < maxDisplayCount(for: id) else { return .exhausted }
 
         let currentTime = now()
 
@@ -157,6 +221,42 @@ enum OneTimeHintCopy {
         icon: "square.grid.2x2.fill",
         title: "Windows Stay in Slots",
         detail: "Drop onto another window or empty slot to move"
+    )
+
+    nonisolated static let autoTilingSnapBack = HintCardContent(
+        icon: "wand.and.stars",
+        title: "Auto-tiling Keeps Windows in Place",
+        detail: "Drag onto another window to swap, or pause Rapto from the menu bar"
+    )
+
+    nonisolated static let notchDesktopsBar = HintCardContent(
+        icon: "menubar.rectangle",
+        title: "Desktops Bar Is Up Here",
+        detail: "Move your pointer to the notch to show desktops and apps",
+        showsUpwardPointer: true
+    )
+
+    nonisolated static let secondDesktopCreated = HintCardContent(
+        icon: "menubar.rectangle",
+        title: "Switch Desktops Faster",
+        detail: "Use the Desktops Bar to jump between desktops or drag apps across"
+    )
+
+    nonisolated static func manyWindowsFlow(shortcut: String?) -> HintCardContent {
+        let validShortcut = (shortcut?.isEmpty == false) ? shortcut : nil
+        let detail = validShortcut.map { "Click the Flow button on the bar or press \($0) to browse windows" }
+            ?? "Click the Flow button on the Desktops Bar to browse all windows in 3D"
+        return HintCardContent(
+            icon: "rectangle.stack.badge.play",
+            title: "Lots of Windows Open?",
+            detail: detail
+        )
+    }
+
+    nonisolated static let workspacesTip = HintCardContent(
+        icon: "square.stack.3d.up",
+        title: "Save This Setup as a Workspace",
+        detail: "Open the Rapto menu → Workspaces to reopen these apps in one click"
     )
 
     nonisolated static func groupBadge(enableScroll: Bool, cycleShortcut: String?) -> HintCardContent {
@@ -257,17 +357,55 @@ final class OneTimeHints {
         scheduler.resetState()
     }
 
+    func hasRemaining(_ id: HintID) -> Bool {
+        !scheduler.isExhausted(id)
+    }
+
     func hideIfShowing(_ id: HintID) {
         guard scheduler.currentlyShowing == id else { return }
         panel.hide()
     }
 
-    /// Shows `id` immediately up to 10 times on `screen` when `stillValid()` holds.
+    /// Marks `id` learned and hides it immediately if currently visible.
+    func markCompleted(_ id: HintID) {
+        let wasShowing = scheduler.currentlyShowing == id
+        scheduler.markCompleted(id)
+        if wasShowing {
+            panel.hide()
+        }
+    }
+
+    /// Shows `id` directly during an active guided step (such as the interactive tour's notch task)
+    /// without counting against the background display budget.
+    func showImmediate(
+        _ id: HintID,
+        content: HintCardContent,
+        placement: @escaping () -> (SpaceBarHint.Placement, NSScreen)?,
+        autoHideAfter: TimeInterval = 12
+    ) {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+              let appState,
+              let (resolvedPlacement, screen) = placement() else {
+            return
+        }
+        let look = appState.spaceBarController.lookForHint(on: screen)
+        panel.show(
+            content,
+            placement: resolvedPlacement,
+            on: screen,
+            look: look,
+            autoHideAfter: autoHideAfter,
+            onHidden: nil
+        )
+    }
+
+    /// Shows `id` immediately up to its limit on `screen` when `stillValid()` holds.
     func showOnce(
         _ id: HintID,
         content: @escaping () -> HintCardContent,
         placement: @escaping () -> (SpaceBarHint.Placement, NSScreen)?,
-        stillValid: @escaping () -> Bool
+        stillValid: @escaping () -> Bool,
+        autoHideAfter: TimeInterval = 6
     ) {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
               let appState else {
@@ -290,7 +428,7 @@ final class OneTimeHints {
                 placement: resolvedPlacement,
                 on: screen,
                 look: look,
-                autoHideAfter: 6,
+                autoHideAfter: autoHideAfter,
                 onHidden: { [weak self] in
                     self?.scheduler.didHideCurrentHint()
                 }

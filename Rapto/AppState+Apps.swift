@@ -181,12 +181,13 @@ extension AppState {
         checkPassthroughState()
     }
 
-    /// Check if current frontmost app requires passthrough and suspend/resume hotkeys
+    /// Check if Rapto is paused, recording a shortcut, or in a passthrough app and suspend/resume hotkeys
     func checkPassthroughState() {
-        if isRecordingShortcut || isFocusedAppInPassthrough() {
+        if isPaused || isRecordingShortcut || isFocusedAppInPassthrough() {
             if !hotkeyManager.isSuspended {
                 hotkeyManager.suspendHotkeys()
-                debugLog("AppState", " Hotkeys suspended (\(isRecordingShortcut ? "recording a shortcut" : "passthrough app"))")
+                let reason = isPaused ? "paused" : (isRecordingShortcut ? "recording a shortcut" : "passthrough app")
+                debugLog("AppState", " Hotkeys suspended (\(reason))")
             }
         } else {
             if hotkeyManager.isSuspended {

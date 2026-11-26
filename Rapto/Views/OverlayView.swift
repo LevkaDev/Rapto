@@ -41,8 +41,9 @@ struct OverlayView: View {
     private var normalModeView: some View {
         VStack(spacing: 16) {
             HStack(spacing: 0) {
+                let partitioned = appState.partitionedTemplates(for: appState.screenManager.activeScreen())
                 GridTemplatePicker(
-                    templates: appState.listedTemplates,
+                    templates: partitioned.primary,
                     selectedTemplate: $appState.selectedTemplate,
                     onSelect: { template in
                         appState.selectTemplate(template)
@@ -63,6 +64,7 @@ struct OverlayView: View {
                     onUnhideStandard: { template in
                         appState.unhideStandardTemplate(template)
                     },
+                    ultrawideTemplates: partitioned.ultrawide,
                     hiddenTemplates: appState.hiddenStandardTemplates,
                     trailingContent: focusZoneButton
                 )

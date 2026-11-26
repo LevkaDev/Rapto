@@ -184,6 +184,12 @@ final class SpaceBarController: ObservableObject {
     /// Whether macOS Accessibility permission is currently granted; when false, the bar shows a warning icon.
     @Published var hasAccessibilityPermission = true
     var onAccessibilityWarningClicked: (() -> Void)?
+    /// Whether Window Flow is currently open (highlights the Flow button on the bar).
+    @Published var isWindowFlowOpen = false
+    /// Live shortcut string for Window Flow shown in the bar button tooltip, or nil when unbound.
+    @Published var windowFlowShortcut: String?
+    /// Fired when the user clicks the Window Flow button on a display's bar.
+    var onWindowFlowClicked: ((String) -> Void)?
     /// Outline of the current desktop, the same color as the active window border
     @Published var currentDesktopColor: NSColor = .systemBlue
     @Published var style: SpaceBarStyle = .dark {
@@ -226,6 +232,10 @@ final class SpaceBarController: ObservableObject {
 
     /// Builds the right-click menu for a desktop (and optional clicked app glyph) on a display.
     var menuBuilder: ((SpaceBarSpace, SpaceBarGlyph?, String) -> NSMenu?)?
+    /// Fired when the user hovers the notch / top hover zone and reveals a hidden Desktops Bar.
+    var onUserRevealedHoverBar: (() -> Void)?
+    /// Fired when the user interacts with the Desktops Bar (switches desktops, focuses an app, or moves a window).
+    var onUserUsedDesktopsBar: (() -> Void)?
     /// Whether a window moved from the pill takes the user along. Option on drop flips it.
     var movesFollowWindow = false
     /// Whether in-action hints (such as the live bar drag label) are shown.
@@ -397,15 +407,22 @@ final class SpaceBarController: ObservableObject {
 
     /// Switch to a desktop. A click on the number does not activate an app.
     func switchTo(spaceID: UInt64, displayID: String) {
+        onUserUsedDesktopsBar?()
         pendingAction = nil
         askForSwitchPermissionIfNeeded()
         startSwitch(spaceID: spaceID, displayID: displayID)
+    }
+
+    /// Toggles Window Flow for the display owning this bar.
+    func openWindowFlow(displayID: String) {
+        onWindowFlowClicked?(displayID)
     }
 
     /// Open the app shown by this icon. If its desktop is hidden, switch there
     /// first and activate the window only after that desktop is on screen.
     func focus(_ glyph: SpaceBarGlyph, on spaceID: UInt64, displayID: String) {
         guard !glyph.windows.isEmpty else { return }
+        onUserUsedDesktopsBar?()
         let key = "\(spaceID)-\(glyph.pid)"
         let index = cycleIndex[key] ?? 0
         let window = glyph.windows[index % glyph.windows.count]
@@ -438,6 +455,7 @@ final class SpaceBarController: ObservableObject {
     /// Move the app's front window on one desktop to another desktop. With `follow`,
     /// the user ends up on the target desktop. Otherwise they stay where they were.
     func move(_ glyph: SpaceBarGlyph, from sourceID: UInt64, to targetID: UInt64, displayID: String, follow: Bool) {
+        onUserUsedDesktopsBar?()
         let spaces = displays.first { $0.id == displayID }?.spaces ?? []
         move(glyph, from: sourceID, to: targetID, displayID: displayID, follow: follow, spaces: spaces)
     }
@@ -779,6 +797,7 @@ final class SpaceBarController: ObservableObject {
             logger.notice("Add desktop: desktop \(newID) added")
             isAddingDesktop = false
             refresh()
+            NotificationCenter.default.post(name: .raptoTourDidAddDesktop, object: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 then?(newID)
             }
@@ -1970,11 +1989,30 @@ final class SpaceBarController: ObservableObject {
         return CGRect(x: screen.frame.midX - width / 2, y: screen.frame.maxY - menuBar, width: width, height: menuBar + 1)
     }
 
+    /// The notch rectangle in AppKit coordinates when `screen` hides its Desktops Bar
+    /// until the pointer hovers the notch; nil on non-notched screens or when always shown.
+    func notchAnchor(on screen: NSScreen) -> NSRect? {
+        guard isEnabled, hasNotch(screen) else { return nil }
+        let displayID = displayUUID(for: screen)
+        guard !displayID.isEmpty, isHoverOnly(screen, displayID: displayID) else { return nil }
+        let menuBar = max(menuBarHeight(of: screen), screen.safeAreaInsets.top, NSStatusBar.system.thickness)
+        var width: CGFloat = 200
+        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+            width = max(120, screen.frame.width - left.width - right.width)
+        }
+        return NSRect(x: screen.frame.midX - width / 2, y: screen.frame.maxY - menuBar, width: width, height: menuBar)
+    }
+
     private func handlePointer(_ mouse: NSPoint) {
         for (displayID, panel) in panels {
             guard let screen = screensByDisplay[displayID], isHoverOnly(screen, displayID: displayID) else { continue }
             if pointer(mouse, keeps: panel, on: screen, displayID: displayID) {
+                let wasRevealed = revealed.contains(displayID)
                 reveal(displayID)
+                if !wasRevealed && revealed.contains(displayID) {
+                    onUserRevealedHoverBar?()
+                    NotificationCenter.default.post(name: .raptoTourDidRevealNotchBar, object: nil)
+                }
             } else if revealed.contains(displayID) {
                 scheduleHide(displayID)
             }

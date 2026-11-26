@@ -10,7 +10,49 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Added
+- **Redesigned Window Flow–styled onboarding and two-part interactive tour**
+  (`WindowFlowOnboardingStyle`, `OnboardingView`, `OnboardingStepViews`, `InteractiveTourView`,
+  `InteractiveTourController`, `TourSandboxWindows`): shortened first-launch setup (Accessibility
+  only up front, auto-tune display summary, equal mode cards without a Recommended bias,
+  `Arrange Now` with one-click `Put Back` Undo, and `Launch at Login`) followed by a floating
+  mouse-first tour covering the chosen mode (Part 1) and the Desktops Bar + Window Flow (Part 2,
+  with dynamic second-desktop creation and temporary sandbox windows when the screen has fewer
+  than two windows).
+- **Window Flow button on the Desktops Bar and quick menus** (`SpaceBarView`,
+  `SpaceBarController`, `WindowFlowController.toggle(onDisplayID:)`, `RaptoApp`, `SpaceBarMenu`):
+  circular Flow button on the left of each display's bar matching the `+` button on the right,
+  opening Window Flow on the clicked display, plus `Open Window Flow` entries in both menus.
+- **Pause Rapto / Resume Rapto** (`AppState.isPaused`, `handlePauseStateChanged`,
+  `MenuBarIconPaused`): temporarily suspends tiling services, watchers and global shortcuts
+  without changing saved desktop modes or layouts.
+- **Display profile auto-tuning** (`DisplayProfile`, `AutoTilingPreferencesStorage.settleUnsaved`,
+  `PredefinedTemplates.standard` / `.ultrawide`): tunes single-window Auto-tiling layout
+  (`Full` vs `Center Focus`), `maxWindows` (2–5, with per-screen overrides for multi-display
+  laptops), starter Manual layout, and tucks ultrawide layouts into an `Ultrawide` submenu on
+  non-ultrawide screens while keeping existing users' saved preferences unchanged.
+- **Progressive discovery and notch hints** (`OneTimeHints`, `ProgressiveDiscoveryPolicy`,
+  `SpaceBarHint`): upward-pointing notch hint for the hidden Desktops Bar on notched MacBooks
+  (retires immediately on reveal), Auto-tiling snap-back tip, and 2-display capped progressive
+  tips for multi-desktop switching, Window Flow at 4+ windows, and Workspaces after 48 hours.
+
+### Changed
+- New installations default `showsMenuBarIcon` to `true` via
+  `AppState.settleUnsavedMenuBarIcon(in:)` with a redesigned monochrome grid icon (`MenuBarIcon`),
+  while existing installs keep their prior setting.
+- Clarified Manual mode copy across onboarding, `TilingMode`, and `Settings → Guide` to describe
+  fixed slots, automatic grouping, and group-indicator switching; hid the terminal/VM scanner
+  notice in Guide when none are installed.
+- Aligned `SpaceBarHint` HUD glass and accent palette with Window Flow.
+
 ### Fixed
+- Fresh installations (and newly unconfigured desktops) failed to start Drag to Snap, Manual, or
+  Auto-tiling when selected in onboarding or `Settings → Guide → Starter Profiles`: writing
+  `defaultModeForNewSpaces` first caused `AppState.mode(for:)` to report the new mode via
+  `ScreenConfiguration.userDefault`, so `setMode` was skipped and no service started until the
+  user manually toggled modes. `AppState.ensureModeActive(_:on:)` (`needsModeActivation`) now
+  checks both explicit desktop configuration and live service state and activates screens before
+  updating `defaultModeForNewSpaces`.
 - Moving a window to another desktop failed for Yab: the middle of its top strip answers as a
   plain group of the window, was taken as a confirmed drag area, and the desktop switched without
   the window. A confirmed spot that does not move the window within the wait is now let go and up

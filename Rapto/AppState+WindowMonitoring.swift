@@ -625,7 +625,7 @@ extension AppState {
         }
     }
     
-    private func removeManualModeGroupingObservers() {
+    func removeManualModeGroupingObservers() {
         for observer in manualModeObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -645,6 +645,7 @@ extension AppState {
     }
     
     private func checkForNewWindows() {
+        guard !isPaused else { return }
         guard !isCheckingForNewWindows, UserSession.isActive else {
             debugLog("AppState"," checkForNewWindows already in progress or session in background, skipping")
             return

@@ -17,7 +17,7 @@ enum TilingMode: String, Codable, CaseIterable, Identifiable {
     /// Drag to Snap: Windows stay free until dragged to screen edges, the top layout bar or a desktop layout
     case dragSnap
     
-    /// Manual: Keeps windows in the slots of the layout chosen for the desktop
+    /// Manual: Fixed grid for the desktop — windows stay in slots, extras group automatically with an indicator to switch between them
     case manualAssignment
     
     var id: String { rawValue }

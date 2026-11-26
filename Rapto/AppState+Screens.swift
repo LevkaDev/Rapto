@@ -91,7 +91,7 @@ extension AppState {
     }
     
     func handleScreensChanged(confirmScreenLoss: Bool = false) {
-        guard UserSession.isActive else { return }
+        guard UserSession.isActive, !isPaused else { return }
         let screenCount = screenManager.screenCount
         logger.info("Screen configuration changed: \(screenCount) screen(s) connected")
         

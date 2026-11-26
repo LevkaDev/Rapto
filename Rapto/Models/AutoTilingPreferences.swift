@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct AutoTilingPreferences: Codable, Equatable {
+nonisolated struct AutoTilingPreferences: Codable, Equatable, Sendable {
     
     // MARK: - Template Assignments
     
@@ -128,12 +128,21 @@ struct AutoTilingPreferences: Codable, Equatable {
 // MARK: - Storage
 
 enum AutoTilingPreferencesStorage {
-    private static let key = "autoTilingPreferences"
+    static let key = "autoTilingPreferences"
 
-    static func save(_ preferences: AutoTilingPreferences) {
+    static func save(_ preferences: AutoTilingPreferences, to store: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(preferences) {
-            UserDefaults.standard.set(data, forKey: key)
+            store.set(data, forKey: key)
         }
+    }
+
+    /// Saves display-tuned defaults for a new install that has no stored preferences yet,
+    /// while preserving the legacy `.default` (Center Focus + max 4) for existing installs.
+    static func settleUnsaved(in store: UserDefaults = .standard, for profile: DisplayProfile) {
+        guard store.data(forKey: key) == nil else { return }
+        let hasCompletedOnboarding = store.bool(forKey: "hasCompletedOnboarding")
+        let initial = hasCompletedOnboarding ? AutoTilingPreferences.default : profile.autoTilingPreferences
+        save(initial, to: store)
     }
     
     /// Load preferences from UserDefaults with migration for new fields

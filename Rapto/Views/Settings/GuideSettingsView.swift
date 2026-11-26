@@ -25,8 +25,18 @@ struct GuideSettingsView: View {
         currentBindings[.openOverlay]?.displayString ?? "⌃⌥G"
     }
 
+    private var dominantProfile: DisplayProfile {
+        DisplayProfile.dominant(for: appState.screenManager.allScreens())
+    }
+
     private var suggestedMaxWindows: Int {
-        OnboardingView.suggestedMaxWindows()
+        dominantProfile.suggestedMaxWindows
+    }
+
+    private var singleWindowLayoutName: String {
+        dominantProfile.suggestedSingleWindowTemplateID == PredefinedTemplates.centerFocus.id
+            ? PredefinedTemplates.centerFocus.name
+            : PredefinedTemplates.full.name
     }
 
     private var gestureSnapshot: GuideGestureCopy.Snapshot {
@@ -64,6 +74,7 @@ struct GuideSettingsView: View {
         .task(id: appState.dismissedAppSuggestions) {
             isScanningApps = true
             scanResult = await AppSuggestionScanner.scan(dismissed: appState.dismissedAppSuggestions)
+            appState.detectedNoPassthroughApps = scanResult.passthrough.isEmpty
             isScanningApps = false
         }
     }
@@ -136,8 +147,8 @@ struct GuideSettingsView: View {
 
                 StarterProfileCard(
                     mode: .manualAssignment,
-                    tagline: "Fixed layout per desktop — overlay optional",
-                    description: "Choose a layout from the Desktops Bar, menu, template shortcut, or optional \(overlayShortcutText) overlay — you never have to open the overlay. Rapto fits current and new windows into its slots, resizes shared borders together, and keeps the layout fixed.",
+                    tagline: "Fixed grid with automatic window groups",
+                    description: "Choose a layout from the Desktops Bar, menu, template shortcut, or optional \(overlayShortcutText) overlay — you never have to open the overlay. Rapto keeps current and new windows in its slots, resizes shared borders together, and automatically groups extra windows inside a slot with a group indicator so you can easily switch between them.",
                     defaultsSummary: "Applies Manual + 4 px gaps + 2 px active window border",
                     isActiveProfile: isProfileActive(.manualAssignment),
                     onApply: { appState.applyStarterProfile(.manualAssignment) }
@@ -147,7 +158,7 @@ struct GuideSettingsView: View {
                     mode: .autoTiling,
                     tagline: "Hands-off dynamic layouts",
                     description: "Rapto automatically switches and adapts the layout as you open and close windows (1–\(suggestedMaxWindows) slots per display, stacking extras into groups). Dragging onto another window on the same display swaps immediately.",
-                    defaultsSummary: "Applies Auto-tiling (max \(suggestedMaxWindows) windows) + 4 px gaps + 2 px active border",
+                    defaultsSummary: "Applies Auto-tiling (1–\(suggestedMaxWindows) windows, \(singleWindowLayoutName) for 1 window) + 4 px gaps + 2 px active border",
                     isActiveProfile: isProfileActive(.autoTiling),
                     onApply: { appState.applyStarterProfile(.autoTiling) }
                 )
@@ -195,7 +206,8 @@ struct GuideSettingsView: View {
     private var isAppStepDone: Bool {
         !appState.passthroughApps.isEmpty ||
         appState.ignoredApps != AppState.defaultIgnoredApps ||
-        !appState.dismissedAppSuggestions.isEmpty
+        !appState.dismissedAppSuggestions.isEmpty ||
+        (!isScanningApps && scanResult.passthrough.isEmpty)
     }
 
     private var smartAppScannerStep: some View {
@@ -243,34 +255,30 @@ struct GuideSettingsView: View {
                 }
                 .padding(.leading, 28)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Image(systemName: "keyboard.badge.ellipsis")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.neuAccent)
-                        Text("Pause Shortcuts in Terminals, Editors & VMs")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        if !unaddedPassthroughSuggestions.isEmpty {
-                            Button("Pause in Detected (\(unaddedPassthroughSuggestions.count))") {
-                                for app in unaddedPassthroughSuggestions {
-                                    appState.addPassthroughApp(app.bundleIdentifier)
+                if !scanResult.passthrough.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .center, spacing: 8) {
+                            Image(systemName: "keyboard.badge.ellipsis")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.neuAccent)
+                            Text("Pause Shortcuts in Terminals, Editors & VMs")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            if !unaddedPassthroughSuggestions.isEmpty {
+                                Button("Pause in Detected (\(unaddedPassthroughSuggestions.count))") {
+                                    for app in unaddedPassthroughSuggestions {
+                                        appState.addPassthroughApp(app.bundleIdentifier)
+                                    }
                                 }
+                                .buttonStyle(NeuButtonStyle(kind: .primary, compact: true))
                             }
-                            .buttonStyle(NeuButtonStyle(kind: .primary, compact: true))
                         }
-                    }
 
-                    Text("Windows still tile normally, while Rapto pauses its keyboard shortcuts whenever one of these apps is focused.")
-                        .font(.caption)
-                        .foregroundStyle(.neuTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if scanResult.passthrough.isEmpty {
-                        Text("No common terminals, modal editors, or VM apps detected — add any app in Apps.")
+                        Text("Windows still tile normally, while Rapto pauses its keyboard shortcuts whenever one of these apps is focused.")
                             .font(.caption)
                             .foregroundStyle(.neuTextSecondary)
-                    } else {
+                            .fixedSize(horizontal: false, vertical: true)
+
                         WrappingChipFlow(spacing: 8) {
                             ForEach(scanResult.passthrough) { suggestion in
                                 let isSelected = appState.passthroughApps.contains(suggestion.bundleIdentifier)
@@ -292,11 +300,11 @@ struct GuideSettingsView: View {
                             }
                         }
                     }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .neuInset(cornerRadius: AppRadius.md)
+                    .padding(.leading, 28)
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .neuInset(cornerRadius: AppRadius.md)
-                .padding(.leading, 28)
 
                 if !scanResult.optionalIgnored.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -338,6 +346,13 @@ struct GuideSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .neuInset(cornerRadius: AppRadius.md)
                     .padding(.leading, 28)
+                }
+
+                if scanResult.passthrough.isEmpty && scanResult.optionalIgnored.isEmpty {
+                    Text("All set — your installed apps work smoothly with Rapto out of the box.")
+                        .font(.caption)
+                        .foregroundStyle(.neuTextSecondary)
+                        .padding(.leading, 28)
                 }
             }
         }
