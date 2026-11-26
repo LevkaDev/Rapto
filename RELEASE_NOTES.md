@@ -3,6 +3,7 @@
 ## Version 6.3
 
 ### Improvements
+- The custom layout editor now snaps zone edges to neighboring zones, screen edges, and 1/2, 1/3, and 1/4 guides (hold Option to place freely), lets you split any zone in half vertically or horizontally in one click, and hides the draft box once you place a zone so no extra box stays on screen (use Add Zone or click an empty spot when you want another).
 - Faster, smoother window arrangements, swaps, and mode switches, with less visual flicker.
 - Faster and more reliable moving of windows between desktops from the Desktops Bar or by shortcut.
 
