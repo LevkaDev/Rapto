@@ -225,6 +225,7 @@ final class WindowUsageTracker {
     private let spaceBar: SpaceBarController
     private var ranker = WindowUsageRanker()
     private var workspaceObservers: [NSObjectProtocol] = []
+    private var spaceBarMoveEndObserver: NSObjectProtocol?
     private var axObserver: AXObserver?
     private var axObservedApp: AXUIElement?
     private var axObservedPID: pid_t = 0
@@ -267,6 +268,15 @@ final class WindowUsageTracker {
                 }
             }
         )
+        spaceBarMoveEndObserver = NotificationCenter.default.addObserver(
+            forName: .spaceBarMoveDidEnd,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleApplicationActivated(pid: nil)
+            }
+        }
 
         if let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier {
             attachFocusedWindowObserver(for: frontPID)
@@ -280,6 +290,10 @@ final class WindowUsageTracker {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         workspaceObservers.removeAll()
+        if let spaceBarMoveEndObserver {
+            NotificationCenter.default.removeObserver(spaceBarMoveEndObserver)
+            self.spaceBarMoveEndObserver = nil
+        }
         detachFocusedWindowObserver()
         settleTask?.cancel()
         settleTask = nil
@@ -319,7 +333,7 @@ final class WindowUsageTracker {
     // MARK: - Observation
 
     private func handleApplicationActivated(pid: pid_t?) {
-        guard !isSuppressed else { return }
+        guard !isSuppressed, !SpaceBarController.isDrivingMouse else { return }
         let targetPID = pid ?? NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
         if targetPID != 0, targetPID != ProcessInfo.processInfo.processIdentifier {
             attachFocusedWindowObserver(for: targetPID)
@@ -330,11 +344,11 @@ final class WindowUsageTracker {
     }
 
     private func handleSpaceChanged() {
-        guard !isSuppressed else { return }
+        guard !isSuppressed, !SpaceBarController.isDrivingMouse else { return }
         spaceSettleTask?.cancel()
         spaceSettleTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 140_000_000)
-            guard !Task.isCancelled, let self, !self.isSuppressed else { return }
+            guard !Task.isCancelled, let self, !self.isSuppressed, !SpaceBarController.isDrivingMouse else { return }
             if let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
                frontPID != self.axObservedPID {
                 self.attachFocusedWindowObserver(for: frontPID)
@@ -344,12 +358,12 @@ final class WindowUsageTracker {
     }
 
     fileprivate func handleFocusedWindowNotification() {
-        guard !isSuppressed else { return }
+        guard !isSuppressed, !SpaceBarController.isDrivingMouse else { return }
         recordCurrentFrontmostWindow()
     }
 
     private func recordCurrentFrontmostWindow() {
-        guard !isSuppressed else { return }
+        guard !isSuppressed, !SpaceBarController.isDrivingMouse else { return }
         let ownPID = ProcessInfo.processInfo.processIdentifier
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == ownPID {
             return

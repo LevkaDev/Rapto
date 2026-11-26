@@ -328,13 +328,13 @@ extension AppState {
         }
     }
 
-    /// A swap, a new gap or a resized slot could not reach the windows of an app that was not
-    /// answering: the layout changed and they stayed where they were. They are put into their
-    /// slots now. Auto Tiling screens arrange their own windows at the next check.
+    /// A swap, a new gap, a resized slot or a Space return could not reach the windows of an app
+    /// that was not answering: the layout changed and they stayed where they were. Put them into
+    /// their slots now without reshuffling the rest of the desktop.
     private func returnWindowsToSlots(ofApp pid: pid_t) {
         guard AppResponsiveness.isResponding(pid), layoutManager.canPerform(operation: .idle) else { return }
         let visibleWindows = windowManager.enumerateWindows()
-        for screenID in layoutManager.screensWithActiveLayouts where !isAutoTilingScreen(screenID) {
+        for screenID in layoutManager.screensWithActiveLayouts {
             let state = layoutManager.state(forScreenID: screenID)
             for (index, slot) in state.slots.enumerated() {
                 for window in slot.windows where window.ownerPID == pid {
@@ -855,6 +855,7 @@ extension AppState {
         let minSize = WindowClassifier.minimumTilableSize
         let unassignedWindows = allWindowsOnScreen.filter { window in
             !managedWindowIDs.contains(window.windowID) &&
+            window.windowID != SpaceBarController.movingWindowID &&
             !isWindowFloating(windowID: window.windowID) &&
             window.frame.width >= minSize &&
             window.frame.height >= minSize &&

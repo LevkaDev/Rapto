@@ -11,6 +11,21 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- Switching back to an Auto-tiling desktop while an App-Napped Mac Catalyst app (such as Apple Maps)
+  was waking up could cause Auto-tiling to drop that window as temporarily unresponsive, collapse
+  the grid from 3 slots to 2, and treat the window as new once it answered — swapping it into the
+  largest slot. `AutoTilingService`, `AppState+Modes`, and `AppState+Spaces` now preserve visible
+  windows that match the current or saved layout while their app is temporarily unresponsive, and
+  `AppState.returnWindowsToSlots(ofApp:)` also returns Auto-tiling windows if they drifted off
+  their slot before waking.
+- Moving a cold App-Napped Mac Catalyst window (such as WhatsApp) from another desktop via the
+  Desktops Bar could still fail on the first attempt because `SettingsWindowDetector` and
+  `WindowUsageTracker` synchronously ran 1 s Accessibility calls on `didActivateApplicationNotification`
+  while the app was mid-wake, starving the raise deadline. `SettingsWindowDetector`,
+  `WindowUsageTracker`, `AutoTilingService`, `FloatingWindowService`, and unassigned-window restore
+  now stand down while `SpaceBarController.isDrivingMouse` is active, and `SpaceBarController`
+  coordinates waking apps off the main thread (`DesktopMoveGrabPlanner.classifyQuickAXProbe`,
+  3 s wake budget with periodic WindowServer nudges, 0 ms extra delay for awake apps).
 - Moving a window to a Manual desktop where every slot is occupied no longer lets a stale slot
   memory entry from an earlier session yank the window out of the slot whose size and position it
   already matches (`AppState.slotForRememberedWindow` now preserves `current` when the old stored

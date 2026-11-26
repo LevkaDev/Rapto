@@ -169,10 +169,11 @@ class AutoTilingService: ObservableObject {
     /// Start auto-tiling with dynamic template selection for a specific screen
     /// - Parameters:
     ///   - skipInitialRedistribute: If true, skips the initial redistribute (used when restoring saved layout)
-    func startDynamic(forScreenID screenID: String, skipInitialRedistribute: Bool = false) {
+    ///   - savedSpaceID: Optional space ID whose saved layout windows should be preserved while waking from App Nap
+    func startDynamic(forScreenID screenID: String, skipInitialRedistribute: Bool = false, savedSpaceID: String? = nil) {
         guard !activeScreens.contains(screenID) else {
             if !skipInitialRedistribute {
-                redistributeWindows(forScreenID: screenID)
+                redistributeWindows(forScreenID: screenID, savedSpaceID: savedSpaceID)
             }
             return
         }
@@ -188,21 +189,25 @@ class AutoTilingService: ObservableObject {
         }
         
         if !skipInitialRedistribute {
-            redistributeWindows(forScreenID: screenID)
+            redistributeWindows(forScreenID: screenID, savedSpaceID: savedSpaceID)
         } else {
             // Update known windows cache ONLY for this screen (not all screens)
             // This prevents overwriting other screens' caches and breaking their removal detection
-            updateKnownWindowsForScreen(screenID)
+            updateKnownWindowsForScreen(screenID, savedSpaceID: savedSpaceID)
         }
     }
     
-    private func updateKnownWindowsForScreen(_ screenID: String) {
+    private func updateKnownWindowsForScreen(_ screenID: String, savedSpaceID: String? = nil) {
         guard let screen = screenManager.screen(for: screenID) else { return }
         
+        let savedLayout = savedSpaceID.flatMap { layoutManager?.loadSavedLayoutInfo(forSpaceID: $0, screenID: screenID) }
+        let preservedIDs = preservedWindowIDs(forScreenID: screenID)
         let currentWindows = windowManager.enumerateWindows()
-        let filteredWindows = filterEligibleWindows(currentWindows)
+        let filteredWindows = filterEligibleWindows(currentWindows, savedLayout: savedLayout)
         let windowsOnScreen = filterWindowsOnScreen(filteredWindows, screen: screen)
-        let eligibleWindows = windowsOnScreen.filter { accessibilityService.isWindowAccessible($0) }
+        let eligibleWindows = windowsOnScreen.filter {
+            isAccessibleOrPreserved($0, knownIDs: preservedIDs, savedLayout: savedLayout)
+        }
         
         knownWindowIDsPerScreen[screenID] = Set(eligibleWindows.map { $0.windowID })
         logger.debug("Updated known windows cache for screen \(screenID): \(eligibleWindows.count) windows")
@@ -328,8 +333,11 @@ class AutoTilingService: ObservableObject {
         
         for screenID in activeScreens {
             guard let screen = screenManager.screen(for: screenID) else { continue }
+            let preservedIDs = preservedWindowIDs(forScreenID: screenID)
             let windowsOnScreen = filterWindowsOnScreen(eligibleWindows, screen: screen)
-            let accessibleWindows = windowsOnScreen.filter { accessibilityService.isWindowAccessible($0) }
+            let accessibleWindows = windowsOnScreen.filter {
+                isAccessibleOrPreserved($0, knownIDs: preservedIDs)
+            }
             var laidOut: Set<CGWindowID>?
             if onlyLaidOut, let state = layoutManager?.state(forScreenID: screenID), state.isActive {
                 laidOut = Set(state.slots.flatMap(\.windows).map(\.windowID))
@@ -482,9 +490,9 @@ class AutoTilingService: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 
-                // Skip during Space change to avoid false redistributions
-                // App activation fires when switching Spaces (focus changes to app in new Space)
-                guard !self.spaceChangeInProgress, UserSession.isActive else {
+                // Skip during Space change or a Desktops Bar move to avoid false redistributions
+                // or blocking AX calls on an App-Napped app waking up mid-move.
+                guard !self.spaceChangeInProgress, !SpaceBarController.isDrivingMouse, UserSession.isActive else {
                     logger.debug("Skipping activation check - Space change in progress or session in background")
                     return
                 }
@@ -616,9 +624,13 @@ class AutoTilingService: ObservableObject {
         for screenID in self.activeScreens {
             guard let screen = self.screenManager.screen(for: screenID) else { continue }
             
+            let preservedIDs = self.preservedWindowIDs(forScreenID: screenID)
             let windowsOnScreen = self.filterWindowsOnScreen(filteredWindows, screen: screen)
-            // Filter by accessibility to exclude windows on other Spaces
-            let eligibleWindows = windowsOnScreen.filter { self.accessibilityService.isWindowAccessible($0) }
+            // Filter by accessibility to exclude windows on other Spaces, while keeping
+            // already-tiled windows whose app is temporarily waking from App Nap
+            let eligibleWindows = windowsOnScreen.filter {
+                self.isAccessibleOrPreserved($0, knownIDs: preservedIDs)
+            }
             let currentIDs = Set(eligibleWindows.map { $0.windowID })
             let knownIDs = self.knownWindowIDsPerScreen[screenID] ?? []
             
@@ -629,10 +641,13 @@ class AutoTilingService: ObservableObject {
                 
                 guard !self.spaceChangeInProgress, NSEvent.pressedMouseButtons & 1 == 0 else { return }
                 
+                let verifyPreservedIDs = self.preservedWindowIDs(forScreenID: screenID)
                 let verifyWindows = self.windowManager.enumerateWindows()
                 let verifyFiltered = self.filterEligibleWindows(verifyWindows)
                 let verifyOnScreen = self.filterWindowsOnScreen(verifyFiltered, screen: screen)
-                let verifyEligible = verifyOnScreen.filter { self.accessibilityService.isWindowAccessible($0) }
+                let verifyEligible = verifyOnScreen.filter {
+                    self.isAccessibleOrPreserved($0, knownIDs: verifyPreservedIDs)
+                }
                 let verifyIDs = Set(verifyEligible.map { $0.windowID })
                 
                 if verifyIDs != knownIDs {
@@ -1226,19 +1241,21 @@ class AutoTilingService: ObservableObject {
         // User resize modifications are lost when window count changes
         layoutManager.clearManualModifications(forScreenID: screenID)
         
+        let savedLayout = savedSpaceID.flatMap { layoutManager.loadSavedLayoutInfo(forSpaceID: $0, screenID: screenID) }
+        let preservedIDs = preservedWindowIDs(forScreenID: screenID)
+        
         let allWindows = windowManager.enumerateWindows()
         logger.info("Found \(allWindows.count) total windows")
         
         let windowsOnScreen = filterWindowsOnScreen(allWindows, screen: screen)
         
-        let filteredWindows = filterEligibleWindows(windowsOnScreen)
+        let filteredWindows = filterEligibleWindows(windowsOnScreen, savedLayout: savedLayout)
         
-        // Filter by accessibility - windows on other Spaces are not accessible via AX API
-        // CGWindowListCopyWindowInfo returns ALL windows across ALL Spaces, but we only want
-        // windows on the current Space. AX API cannot access windows on other Spaces.
+        // Filter by accessibility - windows on other Spaces are not accessible via AX API.
+        // Preserve already-tiled or saved-layout windows whose app is temporarily waking from App Nap
+        // so returning to a desktop never collapses 3 -> 2 -> 3 slots and swaps windows.
         let eligibleWindows = filteredWindows.filter { window in
-            let isAccessible = accessibilityService.isWindowAccessible(window)
-            return isAccessible
+            isAccessibleOrPreserved(window, knownIDs: preservedIDs, savedLayout: savedLayout)
         }
         
         logger.info("Screen \(screenID): \(eligibleWindows.count) eligible windows (filtered from \(filteredWindows.count))")
@@ -1666,9 +1683,79 @@ class AutoTilingService: ObservableObject {
     
     // MARK: - Smart Window Assignment
     // Window-to-slot assignment itself lives in WindowLayoutManager.assignWindowsToSlots()
+
+    /// Whether `window` matches any slot in `savedLayout` (by saved PID, bundle ID, or owner name).
+    nonisolated static func windowMatchesSavedLayout(_ window: WindowInfo, in savedLayout: SavedLayoutInfo) -> Bool {
+        savedLayout.slots.contains { slot in
+            if slot.groupPIDs?.contains(window.ownerPID) == true {
+                return true
+            }
+            if let windowBundle = window.bundleIdentifier {
+                if slot.bundleIdentifier == windowBundle || slot.groupBundleIDs?.contains(windowBundle) == true {
+                    return true
+                }
+            }
+            if let savedOwner = slot.ownerName, !savedOwner.isEmpty, savedOwner == window.ownerName {
+                return true
+            }
+            return false
+        }
+    }
+
+    /// Whether a visible on-screen window whose app is temporarily not answering Accessibility
+    /// (such as a Mac Catalyst app waking from App Nap on Space return) should stay in the
+    /// Auto-tiling window set instead of being dropped and collapsing the layout.
+    nonisolated static func shouldPreserveUnresponsiveWindow(
+        _ window: WindowInfo,
+        isResponding: Bool,
+        knownWindowIDs: Set<CGWindowID>,
+        savedLayout: SavedLayoutInfo?,
+        minimumSize: CGFloat = WindowManager.minimumTilableSize
+    ) -> Bool {
+        guard !isResponding else { return false }
+        guard window.frame.width >= minimumSize && window.frame.height >= minimumSize else { return false }
+        if knownWindowIDs.contains(window.windowID) {
+            return true
+        }
+        guard let savedLayout else { return false }
+        return windowMatchesSavedLayout(window, in: savedLayout)
+    }
+
+    private func preservedWindowIDs(forScreenID screenID: String) -> Set<CGWindowID> {
+        var ids = knownWindowIDsPerScreen[screenID] ?? []
+        if let managed = layoutManager?.state(forScreenID: screenID).managedWindowIDs {
+            ids.formUnion(managed)
+        }
+        return ids
+    }
+
+    private func isAccessibleOrPreserved(
+        _ window: WindowInfo,
+        knownIDs: Set<CGWindowID>,
+        savedLayout: SavedLayoutInfo? = nil
+    ) -> Bool {
+        if accessibilityService.isWindowAccessible(window) {
+            return true
+        }
+        if Self.shouldPreserveUnresponsiveWindow(
+            window,
+            isResponding: AppResponsiveness.isResponding(window.ownerPID),
+            knownWindowIDs: knownIDs,
+            savedLayout: savedLayout
+        ) {
+            debugLog("AutoTiling", " Preserving unresponsive window '\(window.ownerName)' (windowID=\(window.windowID)) while app wakes")
+            return true
+        }
+        return false
+    }
     
-    private func filterEligibleWindows(_ windows: [WindowInfo]) -> [WindowInfo] {
-        let tiledIDs = knownWindowIDsPerScreen.values.reduce(into: Set<CGWindowID>()) { $0.formUnion($1) }
+    private func filterEligibleWindows(_ windows: [WindowInfo], savedLayout: SavedLayoutInfo? = nil) -> [WindowInfo] {
+        var tiledIDs = knownWindowIDsPerScreen.values.reduce(into: Set<CGWindowID>()) { $0.formUnion($1) }
+        if let layoutManager {
+            for screenID in activeScreens {
+                tiledIDs.formUnion(layoutManager.state(forScreenID: screenID).managedWindowIDs)
+            }
+        }
         return windows.filter { window in
             // Exclude small windows (likely dialogs, color pickers, popovers)
             let minSize = WindowManager.minimumTilableSize
@@ -1676,21 +1763,30 @@ class AutoTilingService: ObservableObject {
                 logger.debug("Excluding small window: '\(window.title)' (\(Int(window.frame.width))x\(Int(window.frame.height)))")
                 return false
             }
+
+            if isWindowFloating?(window.windowID) == true {
+                return false
+            }
             
             // Exclude dialogs, sheets, and floating windows using WindowClassifier.
-            // A tiled window stays while it can't be told apart for a moment: while it is resized, its
-            // accessibility frame and the window list disagree, and dropping it rearranges every window
+            // A tiled or saved-layout window stays while it can't be told apart for a moment
+            // (during a resize, or while a Mac Catalyst app is waking from App Nap), because
+            // dropping it collapses the layout and swaps windows when the app finishes waking.
             switch WindowClassifier.shared.classify(window).decision {
             case .tilable:
                 break
             case .unknown where tiledIDs.contains(window.windowID):
                 break
+            case .unknown where Self.shouldPreserveUnresponsiveWindow(
+                window,
+                isResponding: AppResponsiveness.isResponding(window.ownerPID),
+                knownWindowIDs: tiledIDs,
+                savedLayout: savedLayout
+            ):
+                debugLog("AutoTiling", " Keeping unresponsive saved-layout window '\(window.ownerName)' (windowID=\(window.windowID))")
+                break
             default:
                 logger.debug("Excluding non-tilable window: '\(window.title)'")
-                return false
-            }
-
-            if isWindowFloating?(window.windowID) == true {
                 return false
             }
             

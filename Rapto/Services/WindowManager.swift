@@ -16,7 +16,7 @@ class WindowManager {
     private let minimumWindowSize: CGFloat = 100
     
     /// Minimum window size for auto-tiling (larger to filter dialogs)
-    static let minimumTilableSize: CGFloat = 300
+    nonisolated static let minimumTilableSize: CGFloat = 300
     
     /// Bundle identifiers of apps to ignore (set by AppState)
     var ignoredBundleIdentifiers: Set<String> = []

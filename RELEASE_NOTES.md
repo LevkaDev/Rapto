@@ -9,6 +9,7 @@
 ### Fixes
 - Switching from Auto-tiling to Manual mode now keeps your windows in place instead of reshuffling them.
 - Background apps sitting idle on another desktop (such as WhatsApp) now move cleanly when dragged in the Desktops Bar.
+- Switching back to an Auto-tiling desktop no longer reshuffles or swaps windows while an idle app (such as Maps) is waking up.
 - Windows moved or restored onto a Manual desktop now fill empty slots first, keep a matching slot when all slots are full, and no longer steal focus to background apps.
 
 ---

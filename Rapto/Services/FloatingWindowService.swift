@@ -160,7 +160,7 @@ class FloatingWindowService {
     }
     
     private func handleAppActivated(app: NSRunningApplication?) {
-        guard !floatingWindowIDs.isEmpty else { return }
+        guard !floatingWindowIDs.isEmpty, !SpaceBarController.isDrivingMouse else { return }
         
         guard let activatedApp = app else {
             return

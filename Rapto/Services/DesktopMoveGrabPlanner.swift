@@ -6,8 +6,19 @@
 //  finding a draggable title-bar spot when moving a window to another desktop.
 //
 
+import ApplicationServices
 import CoreGraphics
 import Foundation
+
+/// Outcome of a short, non-banning Accessibility window lookup at the start of a desktop move.
+nonisolated enum DesktopMoveAXProbeOutcome: Equatable, Sendable {
+    /// Accessibility returned the matching window element.
+    case ready
+    /// Accessibility timed out; the app is likely waking from App Nap (e.g. a Mac Catalyst scene wake).
+    case waking
+    /// Accessibility answered without a matching window (or the app is confirmed unresponsive).
+    case unavailable
+}
 
 /// How a title-bar spot that successfully dragged an app's window is remembered
 /// relative to the window frame so it keeps working after resizes and moves.
@@ -484,5 +495,55 @@ nonisolated enum DesktopMoveGrabPlanner {
             }
         }
         return point
+    }
+
+    // MARK: - App Nap / Catalyst Wake Coordination
+
+    /// Standard wait for an already-awake window to rise above its neighbors before grabbing.
+    static let normalRaiseDeadline: TimeInterval = 1.0
+    /// Extended wait when the initial AX probe timed out (e.g. a Mac Catalyst app finishing its
+    /// background-to-foreground scene wake before raising its window and accepting drags).
+    static let wakingRaiseDeadline: TimeInterval = 3.0
+    /// Elapsed times (seconds since `beginMove`) at which to re-nudge activation while still behind.
+    static let raiseNudgeIntervals: [TimeInterval] = [0.25, 0.8, 1.5, 2.2]
+
+    /// Distinguishes an app that timed out waking from App Nap from an awake app that simply
+    /// returned no matching AX window.
+    static func classifyQuickAXProbe(
+        error: AXError,
+        waited: TimeInterval,
+        timeout: TimeInterval,
+        foundWindow: Bool
+    ) -> DesktopMoveAXProbeOutcome {
+        if error == .success && foundWindow {
+            return .ready
+        }
+        if error == .cannotComplete && waited >= timeout * 0.8 {
+            return .waking
+        }
+        return .unavailable
+    }
+
+    static func raiseDeadlineDuration(axOutcome: DesktopMoveAXProbeOutcome) -> TimeInterval {
+        axOutcome == .waking ? wakingRaiseDeadline : normalRaiseDeadline
+    }
+
+    /// Next re-nudge index due at `elapsed`, or `nil` when no nudge should fire yet.
+    static func nextRaiseNudgeIndex(elapsed: TimeInterval, completedNudges: Int) -> Int? {
+        guard completedNudges < raiseNudgeIntervals.count,
+              elapsed >= raiseNudgeIntervals[completedNudges] else { return nil }
+        return completedNudges
+    }
+
+    /// Whether `grabWhenRaised` should keep polling before grabbing.
+    /// Awake apps grab immediately once on top; apps whose initial AX probe timed out wait
+    /// (without blocking the main thread) until they answer or the wake deadline passes.
+    static func shouldWaitBeforeGrab(
+        isOnTop: Bool,
+        waitingForWake: Bool,
+        beforeDeadline: Bool
+    ) -> Bool {
+        guard beforeDeadline else { return false }
+        return !isOnTop || waitingForWake
     }
 }

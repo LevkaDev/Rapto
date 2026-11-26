@@ -449,11 +449,20 @@ extension AppState {
         let currentWindows = windowManager.enumerateWindows()
         let windowsOnScreen = filterWindowsOnScreen(currentWindows, screen: screen)
         let eligibleWindows = windowsOnScreen.filter { window in
-            accessibilityService.isWindowAccessible(window) &&
-            window.frame.width >= WindowManager.minimumTilableSize &&
-            window.frame.height >= WindowManager.minimumTilableSize &&
-            WindowClassifier.shared.isTilable(window) &&
-            !isWindowFloating(windowID: window.windowID)
+            guard window.frame.width >= WindowManager.minimumTilableSize,
+                  window.frame.height >= WindowManager.minimumTilableSize,
+                  !isWindowFloating(windowID: window.windowID) else {
+                return false
+            }
+            if accessibilityService.isWindowAccessible(window) && WindowClassifier.shared.isTilable(window) {
+                return true
+            }
+            return AutoTilingService.shouldPreserveUnresponsiveWindow(
+                window,
+                isResponding: AppResponsiveness.isResponding(window.ownerPID),
+                knownWindowIDs: [],
+                savedLayout: savedInfo
+            )
         }
         
         // Count windows in saved layout (non-empty slots)
