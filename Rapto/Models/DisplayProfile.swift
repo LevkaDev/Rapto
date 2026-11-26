@@ -3,7 +3,7 @@
 //  Rapto
 //
 //  Classifies a display (compact laptop, large laptop, standard desktop, ultrawide)
-//  so new installs get sensible layouts, window limits and starter mode recommendations.
+//  so new installs get sensible layouts and window limits automatically.
 //
 
 import AppKit
@@ -90,17 +90,6 @@ nonisolated enum DisplayProfile: String, CaseIterable, Equatable, Sendable {
             return PredefinedTemplates.onePlusTwoLeft
         case .ultrawide:
             return PredefinedTemplates.centerFocus
-        }
-    }
-
-    /// Recommended mode to start with: Drag to Snap on laptops and regular screens,
-    /// Auto-tiling on wide/ultrawide monitors.
-    var recommendedStarterMode: TilingMode {
-        switch self {
-        case .ultrawide:
-            return .autoTiling
-        case .compactLaptop, .largeLaptop, .standardDesktop:
-            return .dragSnap
         }
     }
 

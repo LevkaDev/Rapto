@@ -141,7 +141,6 @@ struct GuideSettingsView: View {
                     tagline: "Free windows, snap on demand",
                     description: "Windows stay free until you drag them — snap to screen edges & corners, the top layout bar, or a layout chosen for that desktop (right-click desktop → Layout). Drop into an occupied zone to group; hold ⌥ Option to move freely.",
                     defaultsSummary: "Applies Drag to Snap + 4 px gaps + hides active border on snapped windows",
-                    isRecommended: dominantProfile.recommendedStarterMode == .dragSnap,
                     isActiveProfile: isProfileActive(.dragSnap),
                     onApply: { appState.applyStarterProfile(.dragSnap) }
                 )
@@ -151,7 +150,6 @@ struct GuideSettingsView: View {
                     tagline: "Fixed grid with automatic window groups",
                     description: "Choose a layout from the Desktops Bar, menu, template shortcut, or optional \(overlayShortcutText) overlay — you never have to open the overlay. Rapto keeps current and new windows in its slots, resizes shared borders together, and automatically groups extra windows inside a slot with a group indicator so you can easily switch between them.",
                     defaultsSummary: "Applies Manual + 4 px gaps + 2 px active window border",
-                    isRecommended: dominantProfile.recommendedStarterMode == .manualAssignment,
                     isActiveProfile: isProfileActive(.manualAssignment),
                     onApply: { appState.applyStarterProfile(.manualAssignment) }
                 )
@@ -161,7 +159,6 @@ struct GuideSettingsView: View {
                     tagline: "Hands-off dynamic layouts",
                     description: "Rapto automatically switches and adapts the layout as you open and close windows (1–\(suggestedMaxWindows) slots per display, stacking extras into groups). Dragging onto another window on the same display swaps immediately.",
                     defaultsSummary: "Applies Auto-tiling (1–\(suggestedMaxWindows) windows, \(singleWindowLayoutName) for 1 window) + 4 px gaps + 2 px active border",
-                    isRecommended: dominantProfile.recommendedStarterMode == .autoTiling,
                     isActiveProfile: isProfileActive(.autoTiling),
                     onApply: { appState.applyStarterProfile(.autoTiling) }
                 )
@@ -588,7 +585,6 @@ private struct StarterProfileCard: View {
     let tagline: String
     let description: String
     let defaultsSummary: String
-    var isRecommended: Bool = false
     let isActiveProfile: Bool
     let onApply: () -> Void
 
@@ -606,15 +602,6 @@ private struct StarterProfileCard: View {
                     Text(tagline)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.neuTextSecondary)
-
-                    if isRecommended {
-                        Text("Recommended")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.neuAccent)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.neuAccent.opacity(0.14), in: Capsule())
-                    }
 
                     Spacer(minLength: 8)
 

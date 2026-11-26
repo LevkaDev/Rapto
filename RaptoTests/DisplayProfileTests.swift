@@ -42,27 +42,23 @@ struct DisplayProfileTests {
         #expect(DisplayProfile.classify(size: CGSize(width: 3008, height: 1692), isBuiltin: false) == .ultrawide)
     }
 
-    @Test("Recommendations match display size: Full for laptops/desktops, Center Focus & Auto-tiling for ultrawide")
+    @Test("Auto-tuning matches display size: Full for laptops/desktops, Center Focus for ultrawide")
     func profileRecommendations() {
         #expect(DisplayProfile.compactLaptop.suggestedMaxWindows == 2)
         #expect(DisplayProfile.compactLaptop.suggestedSingleWindowTemplateID == PredefinedTemplates.full.id)
         #expect(DisplayProfile.compactLaptop.suggestedManualTemplate.id == PredefinedTemplates.halvesVertical.id)
-        #expect(DisplayProfile.compactLaptop.recommendedStarterMode == .dragSnap)
         #expect(DisplayProfile.compactLaptop.prefersUltrawideLayouts == false)
 
         #expect(DisplayProfile.largeLaptop.suggestedMaxWindows == 3)
         #expect(DisplayProfile.largeLaptop.suggestedSingleWindowTemplateID == PredefinedTemplates.full.id)
-        #expect(DisplayProfile.largeLaptop.recommendedStarterMode == .dragSnap)
 
         #expect(DisplayProfile.standardDesktop.suggestedMaxWindows == 4)
         #expect(DisplayProfile.standardDesktop.suggestedSingleWindowTemplateID == PredefinedTemplates.full.id)
         #expect(DisplayProfile.standardDesktop.suggestedManualTemplate.id == PredefinedTemplates.onePlusTwoLeft.id)
-        #expect(DisplayProfile.standardDesktop.recommendedStarterMode == .dragSnap)
 
         #expect(DisplayProfile.ultrawide.suggestedMaxWindows == 5)
         #expect(DisplayProfile.ultrawide.suggestedSingleWindowTemplateID == PredefinedTemplates.centerFocus.id)
         #expect(DisplayProfile.ultrawide.suggestedManualTemplate.id == PredefinedTemplates.centerFocus.id)
-        #expect(DisplayProfile.ultrawide.recommendedStarterMode == .autoTiling)
         #expect(DisplayProfile.ultrawide.prefersUltrawideLayouts == true)
     }
 

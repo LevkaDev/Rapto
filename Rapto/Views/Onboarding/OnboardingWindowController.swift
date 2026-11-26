@@ -47,10 +47,12 @@ final class OnboardingWindowController {
         controller.sizingOptions = []
         hostingController = controller
         
-        let size = NSSize(width: 700, height: 600)
+        let size = NSSize(width: 720, height: 620)
         let newWindow = NSWindow(contentViewController: controller)
         newWindow.title = "Welcome to Rapto"
-        // The demo stage runs under the transparent title bar
+        newWindow.appearance = NSAppearance(named: .darkAqua)
+        newWindow.backgroundColor = WindowFlowThemeTokens.windowBackground
+        // The atmospheric Window Flow sky runs edge-to-edge under the transparent title bar
         newWindow.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
         newWindow.titlebarAppearsTransparent = true
         newWindow.titleVisibility = .hidden

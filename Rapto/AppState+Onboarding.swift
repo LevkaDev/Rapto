@@ -103,7 +103,7 @@ extension AppState {
             }
         }
 
-        let effectiveMode: TilingMode = (mode == .none) ? DisplayProfile.forScreen(screen).recommendedStarterMode : mode
+        let effectiveMode: TilingMode = (mode == .none) ? .dragSnap : mode
         switch effectiveMode {
         case .autoTiling:
             if self.mode(for: screen) != .autoTiling {

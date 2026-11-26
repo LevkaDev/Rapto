@@ -31,7 +31,7 @@ struct OnboardingView: View {
     @State private var currentStep: OnboardingStep = .welcomePermissions
     @State private var hasAccessibilityPermission = AXIsProcessTrusted()
     @State private var didAskAccessibility = false
-    @State private var chosenMode: TilingMode = DisplayProfile.dominant(for: NSScreen.screens).recommendedStarterMode
+    @State private var chosenMode: TilingMode = .dragSnap
     @State private var hoveredMode: TilingMode?
     @State private var autoTilingMaxWindows = OnboardingView.suggestedMaxWindows()
     @State private var shortcuts = OnboardingShortcuts()
@@ -54,34 +54,42 @@ struct OnboardingView: View {
         OnboardingStep.allCases.filter { $0 != .macTiling || showsMacTilingStep }
     }
 
-    static let stageHeight: CGFloat = 225
+    static let stageHeight: CGFloat = 200
 
     var body: some View {
-        VStack(spacing: 0) {
-            OnboardingStage(clip: clip) { stage }
-                .frame(height: Self.stageHeight)
-                .ignoresSafeArea(edges: .top)
+        ZStack {
+            OnboardingSkyBackdrop()
 
-            stepContent
-                .padding(.horizontal, 32)
-                .padding(.top, 22)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .id(currentStep)
-                .transition(stepTransition)
+            VStack(spacing: 0) {
+                OnboardingStage(clip: clip) { stage }
+                    .frame(height: Self.stageHeight)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 34)
 
-            Divider()
+                stepContent
+                    .padding(.horizontal, 28)
+                    .padding(.top, 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .id(currentStep)
+                    .transition(stepTransition)
 
-            navigation
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(height: 0.5)
+
+                navigation
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+                    .background(Color(red: 0.03, green: 0.05, blue: 0.10).opacity(0.35))
+            }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .dark)
         .onAppear {
             shortcuts = OnboardingShortcuts()
             if appState.currentMode != .none {
                 chosenMode = appState.currentMode
             } else {
-                chosenMode = dominantProfile.recommendedStarterMode
+                chosenMode = .dragSnap
             }
             if appState.hasCompletedOnboarding {
                 autoTilingMaxWindows = appState.autoTilingPreferences.maxWindows
@@ -186,7 +194,7 @@ struct OnboardingView: View {
     // MARK: - Navigation
 
     private var navigation: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             progressDots
 
             Spacer()
@@ -194,7 +202,9 @@ struct OnboardingView: View {
             if currentStep == .macTiling && !macTilingOptions.isEmpty {
                 Button("Skip for Now", action: goForward)
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.68))
+                    .padding(.horizontal, 8)
             }
 
             if currentStep == .quickStart {
@@ -202,28 +212,33 @@ struct OnboardingView: View {
                     finishOnboardingWithoutTour()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.68))
+                .padding(.horizontal, 8)
             }
 
             if currentStep != .welcomePermissions {
                 Button("Back", action: goBack)
+                    .buttonStyle(WindowFlowSecondaryButtonStyle())
                     .keyboardShortcut(.leftArrow, modifiers: [])
             }
 
             Button(primaryTitle, action: primaryAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(WindowFlowPrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canProceed)
         }
-        .controlSize(.large)
     }
 
     private var progressDots: some View {
         HStack(spacing: 6) {
             ForEach(steps) { step in
                 Capsule()
-                    .fill(step == currentStep ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(step.rawValue < currentStep.rawValue ? 0.35 : 0.15)))
-                    .frame(width: step == currentStep ? 18 : 6, height: 6)
+                    .fill(step == currentStep
+                          ? Color.white
+                          : Color.white.opacity(step.rawValue < currentStep.rawValue ? 0.50 : 0.22))
+                    .frame(width: step == currentStep ? 20 : 6, height: 6)
+                    .shadow(color: step == currentStep ? Color.white.opacity(0.4) : .clear, radius: 4)
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: currentStep)

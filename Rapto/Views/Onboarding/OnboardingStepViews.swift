@@ -62,19 +62,19 @@ struct OnboardingHeader: View {
     var body: some View {
         VStack(spacing: 6) {
             Text(title)
-                .font(.title2)
-                .fontWeight(.bold)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.white)
             Text(subtitle)
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .multilineTextAlignment(.center)
-        .frame(maxWidth: 480)
+        .frame(maxWidth: 520)
     }
 }
 
-/// Rounded card that groups rows in the lower half of a step
+/// Sculpted Window Flow dark-glass container that groups rows in the lower half of a step
 private struct OnboardingCard<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -82,11 +82,7 @@ private struct OnboardingCard<Content: View>: View {
         VStack(spacing: 0) { content }
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            )
+            .windowFlowGlass(cornerRadius: 15)
     }
 }
 
@@ -142,7 +138,7 @@ struct WelcomeAccessibilityStepView: View {
     let onRequestAccessibility: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 18) {
             OnboardingHeader(
                 title: "Welcome to Rapto",
                 subtitle: "Arrange windows cleanly without fighting macOS. Allow Accessibility once so Rapto can move and resize windows — nothing leaves your Mac"
@@ -150,43 +146,45 @@ struct WelcomeAccessibilityStepView: View {
 
             OnboardingCard {
                 HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
-                            Text("Accessibility").font(.body.weight(.semibold))
+                            Text("Accessibility")
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .foregroundStyle(.white)
                             Text("Required")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(Color.orange)
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(Color.orange.opacity(0.15), in: Capsule())
+                                .padding(.vertical, 1.5)
+                                .background(Color.orange.opacity(0.18), in: Capsule())
                         }
                         Text("Lets Rapto move and resize windows on your Mac")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.68))
                     }
                     Spacer()
                     if hasAccessibility {
                         Label("Allowed", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.body.weight(.medium))
+                            .foregroundStyle(Color(red: 0.32, green: 0.86, blue: 0.50))
+                            .font(.system(size: 13, weight: .semibold))
                     } else {
                         Button("Allow…", action: onRequestAccessibility)
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(WindowFlowPrimaryButtonStyle(compact: true))
                     }
                 }
                 .padding(.vertical, 10)
             }
-            .frame(maxWidth: 520)
+            .frame(maxWidth: 540)
 
             if !hasAccessibility {
                 Text("Turn on Rapto in System Settings → Privacy & Security → Accessibility, then come back here")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.62))
                     .multilineTextAlignment(.center)
             } else {
-                Text("Ready to go — next we'll tune Rapto for your screen in one click")
+                Text("Ready to go — next choose how you want windows to behave")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.66))
             }
         }
     }
@@ -202,28 +200,28 @@ struct AutoTunedModeStepView: View {
     let overlayShortcut: String
     let autoTuneSummary: String
 
-    private var recommendedMode: TilingMode {
-        DisplayProfile.dominant(for: NSScreen.screens).recommendedStarterMode
-    }
-
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 13) {
             OnboardingHeader(
-                title: "Tuned for your Mac",
-                subtitle: "Pick how you want windows to behave — you can switch or pause Rapto anytime from the menu bar"
+                title: "Choose your style",
+                subtitle: "Every desktop can use its own mode — switch or pause Rapto anytime from the menu bar"
             )
 
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: "sparkles")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(WindowFlowThemeTokens.accentSky)
                 Text(autoTuneSummary)
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.primary.opacity(0.88))
+                    .foregroundStyle(.white.opacity(0.84))
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color.accentColor.opacity(0.10), in: Capsule())
+            .padding(.vertical, 5)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.75)
+            )
 
             HStack(spacing: 12) {
                 ForEach(ModeChoice.all(overlayShortcut: overlayShortcut)) { choice in
@@ -245,10 +243,11 @@ struct AutoTunedModeStepView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Windows on screen")
-                    .font(.headline)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
                 Text("Extra windows join a slot as a group. Change it anytime in Settings.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.66))
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -262,68 +261,69 @@ struct AutoTunedModeStepView: View {
                         Text("\(count)")
                             .font(.callout.weight(isSelected ? .semibold : .regular))
                             .frame(width: 26, height: 24)
-                            .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                            .background(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.06)),
-                                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.82))
+                            .background(
+                                isSelected ? WindowFlowThemeTokens.accentBlue : Color.white.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(isSuggested && !isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear), lineWidth: 1)
+                                    .strokeBorder(
+                                        isSuggested && !isSelected
+                                            ? WindowFlowThemeTokens.accentSky.opacity(0.65)
+                                            : Color.white.opacity(isSelected ? 0.35 : 0.10),
+                                        lineWidth: 1
+                                    )
                             )
                             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .help(isSuggested ? "Recommended for your display" : "")
-                    .accessibilityLabel(isSuggested ? "\(count) windows, recommended for your display" : "\(count) windows")
+                    .help(isSuggested ? "Auto-tuned for your display" : "")
+                    .accessibilityLabel(isSuggested ? "\(count) windows, auto-tuned for your display" : "\(count) windows")
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .windowFlowGlass(cornerRadius: 13)
     }
 
     private func card(_ choice: ModeChoice) -> some View {
         let isSelected = selection == choice.mode
-        let isRecommended = choice.mode == recommendedMode
+        let isHovered = hovered == choice.mode
         return Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
                 selection = choice.mode
             }
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack {
                     Image(systemName: choice.icon)
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundStyle(.tint)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(isSelected ? WindowFlowThemeTokens.accentSky : .white.opacity(0.86))
+                        .frame(width: 30, height: 30)
+                        .background(
+                            (isSelected ? WindowFlowThemeTokens.accentBlue.opacity(0.24) : Color.white.opacity(0.09)),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
                     Spacer()
-                    if isRecommended {
-                        Text("Recommended")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tint)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.14), in: Capsule())
-                    }
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 16))
-                        .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                        .foregroundStyle(isSelected ? WindowFlowThemeTokens.accentSky : Color.white.opacity(0.28))
                 }
                 Text(choice.title)
-                    .font(.headline)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
                 Text(choice.text)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.70))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(12)
+            .padding(13)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(hovered == choice.mode ? 0.25 : 0.08)),
-                                  lineWidth: isSelected ? 2 : 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .windowFlowGlass(cornerRadius: 15, isSelected: isSelected, isHovered: isHovered)
+            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { inside in
@@ -356,17 +356,18 @@ struct QuickStartStepView: View {
                 HStack(spacing: 12) {
                     Image(systemName: didArrange ? "checkmark.circle.fill" : "square.grid.2x2")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(didArrange ? Color.green : Color.accentColor)
+                        .foregroundStyle(didArrange ? Color(red: 0.32, green: 0.86, blue: 0.50) : WindowFlowThemeTokens.accentSky)
                         .frame(width: 24)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(openWindowCount >= 2 ? "Arrange Your Open Windows" : "Try With Sample Windows")
-                            .font(.body.weight(.semibold))
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(.white)
                         Text(openWindowCount >= 2
                              ? (didArrange ? "Done — you can undo with one click" : "Neatly lays out \(openWindowCount) windows on this screen")
                              : "Opens 2 temporary windows you can drag and snap safely")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.68))
                     }
 
                     Spacer(minLength: 8)
@@ -380,7 +381,7 @@ struct QuickStartStepView: View {
                                 didArrange = false
                             }
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(WindowFlowSecondaryButtonStyle(compact: true))
                     }
 
                     if openWindowCount >= 2 {
@@ -390,31 +391,34 @@ struct QuickStartStepView: View {
                                 didArrange = true
                             }
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(WindowFlowPrimaryButtonStyle(compact: true))
                     } else {
                         Button("Open 2 Windows") {
                             appState.openTourSandboxWindows()
                             refreshCount()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(WindowFlowPrimaryButtonStyle(compact: true))
                     }
                 }
                 .padding(.vertical, 10)
 
-                Divider()
+                Rectangle()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(height: 0.5)
 
                 HStack(spacing: 12) {
                     Image(systemName: "power")
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(WindowFlowThemeTokens.accentSky)
                         .frame(width: 24)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Launch Rapto at Login")
-                            .font(.body.weight(.medium))
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(.white)
                         Text("Keep Rapto ready automatically after you restart your Mac")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.68))
                     }
 
                     Spacer()
@@ -423,18 +427,18 @@ struct QuickStartStepView: View {
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }
-                .padding(.vertical, 8)
+                .padding(.vertical, 9)
             }
-            .frame(maxWidth: 520)
+            .frame(maxWidth: 540)
 
             HStack(spacing: 8) {
                 Image(systemName: "menubar.rectangle")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.62))
                 Text("Look for the Rapto icon in your menu bar anytime to switch modes, pause or open Settings")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.66))
             }
             .font(.caption)
-            .frame(maxWidth: 520, alignment: .leading)
+            .frame(maxWidth: 540, alignment: .leading)
         }
         .onAppear {
             refreshCount()
@@ -580,19 +584,21 @@ struct MacTilingStepView: View {
 
             OnboardingCard {
                 ForEach(Array(MacOSTiling.Option.allCases.enumerated()), id: \.element) { index, option in
-                    if index > 0 { Divider() }
+                    if index > 0 {
+                        Rectangle().fill(Color.white.opacity(0.10)).frame(height: 0.5)
+                    }
                     row(option)
                 }
             }
-            .frame(maxWidth: 520)
+            .frame(maxWidth: 540)
 
             if !enabled.isEmpty {
                 VStack(spacing: 8) {
                     Button("Open \(MacOSTiling.paneName)…", action: onOpenSettings)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(WindowFlowPrimaryButtonStyle(compact: true))
                     Text("Turn these off in System Settings → \(MacOSTiling.paneName) → \(MacOSTiling.sections(of: enabled).joined(separator: " and ")), then come back here")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.64))
                 }
             }
         }
@@ -602,6 +608,7 @@ struct MacTilingStepView: View {
         let isOn = enabled.contains(option)
         return HStack(spacing: 12) {
             Text(option.title)
+                .foregroundStyle(.white.opacity(0.92))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             if isOn {
@@ -610,11 +617,11 @@ struct MacTilingStepView: View {
                     .foregroundStyle(.orange)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.15), in: Capsule())
+                    .background(Color.orange.opacity(0.18), in: Capsule())
             } else {
                 Label("Off", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.body.weight(.medium))
+                    .foregroundStyle(Color(red: 0.32, green: 0.86, blue: 0.50))
+                    .font(.system(size: 13, weight: .semibold))
             }
         }
         .padding(.vertical, 8)
@@ -649,10 +656,6 @@ struct ModeStepView: View {
     @Binding var maxWindows: Int
     let suggestedMaxWindows: Int
     let overlayShortcut: String
-
-    private var recommendedMode: TilingMode {
-        DisplayProfile.dominant(for: NSScreen.screens).recommendedStarterMode
-    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -725,7 +728,6 @@ struct ModeStepView: View {
 
     private func card(_ choice: ModeChoice) -> some View {
         let isSelected = selection == choice.mode
-        let isRecommended = choice.mode == recommendedMode
         return Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 selection = choice.mode
@@ -737,14 +739,6 @@ struct ModeStepView: View {
                         .font(.system(size: 20, weight: .medium))
                         .foregroundStyle(.tint)
                     Spacer()
-                    if isRecommended {
-                        Text("Recommended")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tint)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.14), in: Capsule())
-                    }
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 16))
                         .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))

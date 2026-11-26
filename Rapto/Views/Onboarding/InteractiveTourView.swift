@@ -156,20 +156,14 @@ struct InteractiveTourView: View {
         .background {
             ZStack {
                 VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                shape.fill(Color(red: 0.06, green: 0.07, blue: 0.10).opacity(0.76))
+                shape.fill(WindowFlowThemeTokens.glassFill)
             }
         }
         .clipShape(shape)
         .overlay {
-            shape.strokeBorder(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.24), Color.white.opacity(0.08)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                ),
-                lineWidth: 1
-            )
+            shape.strokeBorder(WindowFlowThemeTokens.rimGradient, lineWidth: 1)
         }
+        .shadow(color: .black.opacity(0.44), radius: 20, y: 8)
         .environment(\.colorScheme, .dark)
         .onAppear {
             refreshWindowCount()
@@ -299,23 +293,20 @@ struct InteractiveTourView: View {
                         appState.openTourSandboxWindows()
                         refreshWindowCount()
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(WindowFlowSecondaryButtonStyle(compact: true))
                 } else if model.activeTask == .arrangeWindows {
                     Button("Arrange Now") {
                         appState.arrangeWindowsForFirstRun(mode: model.mode)
                         complete(.arrangeWindows)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(WindowFlowPrimaryButtonStyle(compact: true))
                 }
 
                 if appState.hasUndoableFirstArrange {
                     Button("Put Windows Back") {
                         appState.undoFirstRunArrange()
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(WindowFlowSecondaryButtonStyle(compact: true))
                 }
 
                 Spacer()
@@ -323,8 +314,7 @@ struct InteractiveTourView: View {
                 Button(model.isAllDone ? "Done" : "Finish") {
                     onFinish()
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(WindowFlowPrimaryButtonStyle(compact: true))
             }
         }
         .padding(.top, 2)
