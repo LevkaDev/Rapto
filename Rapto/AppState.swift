@@ -971,6 +971,13 @@ class AppState: ObservableObject {
             accessibilityService: accessibilityService,
             windowManager: windowManager
         )
+        self.windowSwapService?.onLayoutTransition = { [weak self] inTransition in
+            if inTransition {
+                self?.windowHighlightService?.beginLayoutTransition()
+            } else {
+                self?.windowHighlightService?.endLayoutTransition()
+            }
+        }
         
         self.windowResizeService = WindowResizeService(
             accessibilityService: accessibilityService,

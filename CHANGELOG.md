@@ -33,6 +33,10 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
   joining occupied ones.
 
 ### Changed
+- **Simultaneous parallel window swaps** (`WindowSwapService`, `AppState+Hotkeys`): mouse
+  drag-drop swaps and keyboard slot swaps now move both windows concurrently via
+  `AccessibilityService.batchSetWindowFrames` with a calm highlight border fade-in instead of
+  repositioning one window after the other.
 - **Calmer, single-beat window transitions without focus theft** (`AccessibilityService`,
   `WindowHighlightService`, `AppState+Modes`, `AutoTilingService`, `AppState+Layouts`):
   - Switching from Auto-tiling to Manual now inherits the live Auto-tiling grid in place (zero

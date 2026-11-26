@@ -2,18 +2,14 @@
 
 ## Version 6.3
 
-### New
-- 
-
 ### Improvements
-- Moving windows between desktops from the Desktops Bar or by shortcut is now faster and more reliable across browsers, Electron apps, and windows without standard title-bar buttons.
-- Layout changes and mode switches now move windows together in one calm step instead of one by one, keep your current active window focused, and gently fade the active-window border back in once windows settle.
+- Faster, smoother window arrangements, swaps, and mode switches, with less visual flicker.
+- Faster and more reliable moving of windows between desktops from the Desktops Bar or by shortcut.
 
 ### Fixes
-- Moving a background app that was asleep in App Nap (such as WhatsApp on another desktop) via the Desktops Bar no longer times out and aborts the move.
-- Moving a window to a Manual desktop where every slot is occupied now keeps it in the slot matching its current size and position instead of pulling it into an older occupied slot from a previous session.
-- Switching from Auto-tiling to Manual mode now keeps your windows right where they are instead of reshuffling them back to an earlier Manual snapshot.
-- Restoring a Manual layout now places newly opened windows into empty slots first instead of stacking them onto an occupied slot while another slot sits empty, and no longer steals focus to background apps.
+- Switching from Auto-tiling to Manual mode now keeps your windows in place instead of reshuffling them.
+- Background apps sitting idle on another desktop (such as WhatsApp) now move cleanly when dragged in the Desktops Bar.
+- Windows moved or restored onto a Manual desktop now fill empty slots first, keep a matching slot when all slots are full, and no longer steal focus to background apps.
 
 ---
 
