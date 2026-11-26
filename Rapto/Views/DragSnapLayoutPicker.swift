@@ -13,7 +13,7 @@ final class DragSnapLayoutPicker {
 
     static let pickerHintID = "dragSnapPicker"
 
-    /// Zones are relative frames with the origin at the bottom left, like `SnapZone.resultFrame`
+    /// Built-in layouts. Zones are relative frames with the origin at the bottom left, like `SnapZone.resultFrame`.
     static let layouts: [[CGRect]] = [
         [CGRect(x: 0, y: 0, width: 0.5, height: 1), CGRect(x: 0.5, y: 0, width: 0.5, height: 1)],
         [CGRect(x: 0, y: 0.5, width: 1, height: 0.5), CGRect(x: 0, y: 0, width: 1, height: 0.5)],
@@ -31,7 +31,17 @@ final class DragSnapLayoutPicker {
     struct Pick: Equatable {
         let layout: Int
         let zone: Int
-        var relativeFrame: CGRect { DragSnapLayoutPicker.layouts[layout][zone] }
+        let relativeFrame: CGRect
+    }
+
+    nonisolated struct LayoutGeometry: Equatable, Sendable {
+        let panelSize: CGSize
+        /// Thumbnail rects in view coordinates (AppKit bottom-left origin)
+        let thumbnails: [CGRect]
+        /// Vertical separator between standard and custom layouts when shown in one row
+        let verticalDividerX: CGFloat?
+        /// Horizontal separator between standard and custom rows when wrapped
+        let horizontalDividerY: CGFloat?
     }
 
     // MARK: - Workaround: a hidden .canJoinAllSpaces window ends up on one desktop
@@ -43,12 +53,130 @@ final class DragSnapLayoutPicker {
     private let pickerView = PickerView()
     private var screenFrame: CGRect?
     private var currentShowsCaption = false
+    private var currentExtraLayouts: [[CGRect]] = []
+    private var activeLayouts: [[CGRect]] = DragSnapLayoutPicker.layouts
     private(set) var isShowing = false
 
-    private let thumbnailWidth: CGFloat = 84
-    private let spacing: CGFloat = 10
-    private let padding: CGFloat = 10
-    private let captionHeight: CGFloat = 20
+    nonisolated static let defaultThumbnailWidth: CGFloat = 84
+    nonisolated static let compactThumbnailWidth: CGFloat = 68
+    nonisolated static let spacing: CGFloat = 10
+    nonisolated static let dividerGap: CGFloat = 16
+    nonisolated static let padding: CGFloat = 10
+    nonisolated static let captionHeight: CGFloat = 20
+
+    /// Computes panel size and thumbnail frames so standard and pinned custom layouts always fit
+    /// comfortably inside `visibleFrame`. Uses a single row when everything fits, shrinking slightly
+    /// if needed, and wraps custom layouts into centered rows underneath on narrower screens.
+    nonisolated static func layoutGeometry(
+        standardCount: Int,
+        customCount: Int,
+        visibleFrame: CGRect,
+        showsCaption: Bool
+    ) -> LayoutGeometry {
+        let aspect = visibleFrame.width > 0 ? visibleFrame.height / visibleFrame.width : 0.6
+        let clampedAspect = min(max(aspect, 0.35), 1)
+        let extraTop = showsCaption ? captionHeight : 0
+        let maxPanelWidth = max(320, visibleFrame.width - 32)
+        let total = standardCount + customCount
+
+        func singleRowWidth(thumbWidth: CGFloat) -> CGFloat {
+            guard total > 0 else { return padding * 2 }
+            let base = padding * 2 + CGFloat(total) * thumbWidth + CGFloat(max(0, total - 1)) * spacing
+            return customCount > 0 && standardCount > 0 ? base + dividerGap - spacing : base
+        }
+
+        // Fit on one row at default width, or slightly compacted down to `compactThumbnailWidth`.
+        if customCount == 0 || singleRowWidth(thumbWidth: compactThumbnailWidth) <= maxPanelWidth {
+            let thumbWidth: CGFloat
+            if singleRowWidth(thumbWidth: defaultThumbnailWidth) <= maxPanelWidth {
+                thumbWidth = defaultThumbnailWidth
+            } else {
+                let extraGap = (customCount > 0 && standardCount > 0) ? (dividerGap - spacing) : 0
+                let available = maxPanelWidth - padding * 2 - CGFloat(max(0, total - 1)) * spacing - extraGap
+                thumbWidth = max(compactThumbnailWidth, floor(available / CGFloat(max(1, total))))
+            }
+            let thumbHeight = (thumbWidth * clampedAspect).rounded()
+            let width = singleRowWidth(thumbWidth: thumbWidth)
+            let height = padding * 2 + thumbHeight + extraTop
+
+            var thumbnails: [CGRect] = []
+            thumbnails.reserveCapacity(total)
+            var x = padding
+            var dividerX: CGFloat?
+            for index in 0..<total {
+                if customCount > 0 && standardCount > 0 && index == standardCount {
+                    dividerX = (x - spacing + dividerGap / 2).rounded()
+                    x += dividerGap - spacing
+                }
+                thumbnails.append(CGRect(x: x, y: padding, width: thumbWidth, height: thumbHeight))
+                x += thumbWidth + spacing
+            }
+            return LayoutGeometry(
+                panelSize: CGSize(width: width, height: height),
+                thumbnails: thumbnails,
+                verticalDividerX: dividerX,
+                horizontalDividerY: nil
+            )
+        }
+
+        // Wrap: standard layouts sit in the top row, custom layouts sit in centered rows below.
+        let standardWidth: CGFloat = {
+            let needed = padding * 2 + CGFloat(standardCount) * defaultThumbnailWidth + CGFloat(max(0, standardCount - 1)) * spacing
+            if needed <= maxPanelWidth { return defaultThumbnailWidth }
+            let available = maxPanelWidth - padding * 2 - CGFloat(max(0, standardCount - 1)) * spacing
+            return max(compactThumbnailWidth, floor(available / CGFloat(max(1, standardCount))))
+        }()
+        let thumbWidth = standardWidth
+        let thumbHeight = (thumbWidth * clampedAspect).rounded()
+        let maxPerRow = max(1, min(standardCount, Int(floor((maxPanelWidth - padding * 2 + spacing) / (thumbWidth + spacing)))))
+
+        var rows: [[Int]] = []
+        if standardCount > 0 {
+            rows.append(Array(0..<standardCount))
+        }
+        var nextCustom = standardCount
+        while nextCustom < total {
+            let end = min(total, nextCustom + maxPerRow)
+            rows.append(Array(nextCustom..<end))
+            nextCustom = end
+        }
+
+        let widestRowCount = rows.map(\.count).max() ?? 1
+        let panelWidth = padding * 2 + CGFloat(widestRowCount) * thumbWidth + CGFloat(max(0, widestRowCount - 1)) * spacing
+        let dividerBand: CGFloat = standardCount > 0 ? 12 : 0
+        let panelHeight = padding * 2
+            + CGFloat(rows.count) * thumbHeight
+            + CGFloat(max(0, rows.count - 1)) * spacing
+            + dividerBand
+            + extraTop
+
+        var thumbnails = Array(repeating: CGRect.zero, count: total)
+        var horizontalDividerY: CGFloat?
+        // In AppKit coordinates row 0 is at the top (highest y).
+        var currentTopY = panelHeight - padding - extraTop
+        for (rowIndex, indices) in rows.enumerated() {
+            let rowWidth = CGFloat(indices.count) * thumbWidth + CGFloat(max(0, indices.count - 1)) * spacing
+            var x = ((panelWidth - rowWidth) / 2).rounded()
+            let rowY = currentTopY - thumbHeight
+            for layoutIndex in indices {
+                thumbnails[layoutIndex] = CGRect(x: x, y: rowY, width: thumbWidth, height: thumbHeight)
+                x += thumbWidth + spacing
+            }
+            if rowIndex == 0 && standardCount > 0 && rows.count > 1 {
+                horizontalDividerY = (rowY - (spacing + dividerBand) / 2).rounded()
+                currentTopY = rowY - spacing - dividerBand
+            } else {
+                currentTopY = rowY - spacing
+            }
+        }
+
+        return LayoutGeometry(
+            panelSize: CGSize(width: panelWidth, height: panelHeight),
+            thumbnails: thumbnails,
+            verticalDividerX: nil,
+            horizontalDividerY: horizontalDividerY
+        )
+    }
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -66,28 +194,36 @@ final class DragSnapLayoutPicker {
 
     /// - Parameters:
     ///   - visibleFrame: The screen's visible frame (AppKit coordinates). The picker hangs from its top
+    ///   - extraLayouts: Pinned custom layouts to show next to the built-in ones
     ///   - showsCaption: Whether to show "Drop on a layout to snap there" above the thumbnails
-    func show(in visibleFrame: CGRect, showsCaption: Bool = false) {
-        let aspect = visibleFrame.width > 0 ? visibleFrame.height / visibleFrame.width : 0.6
-        let thumbnailHeight = (thumbnailWidth * min(max(aspect, 0.35), 1)).rounded()
-        let count = CGFloat(Self.layouts.count)
-        let extraTop = showsCaption ? captionHeight : 0
-        let size = CGSize(
-            width: padding * 2 + count * thumbnailWidth + (count - 1) * spacing,
-            height: padding * 2 + thumbnailHeight + extraTop
+    func show(in visibleFrame: CGRect, extraLayouts: [[CGRect]] = [], showsCaption: Bool = false) {
+        let validExtras = extraLayouts.filter { !$0.isEmpty }
+        guard !isShowing
+                || screenFrame != visibleFrame
+                || currentShowsCaption != showsCaption
+                || currentExtraLayouts != validExtras else { return }
+
+        screenFrame = visibleFrame
+        currentShowsCaption = showsCaption
+        currentExtraLayouts = validExtras
+        activeLayouts = Self.layouts + validExtras
+
+        let geometry = Self.layoutGeometry(
+            standardCount: Self.layouts.count,
+            customCount: validExtras.count,
+            visibleFrame: visibleFrame,
+            showsCaption: showsCaption
         )
+        let size = geometry.panelSize
         let frame = CGRect(
             x: (visibleFrame.midX - size.width / 2).rounded(),
             y: visibleFrame.maxY - size.height - 12,
             width: size.width, height: size.height
         )
-        guard !isShowing || screenFrame != visibleFrame || currentShowsCaption != showsCaption else { return }
-        screenFrame = visibleFrame
-        currentShowsCaption = showsCaption
-        pickerView.thumbnails = (0..<Self.layouts.count).map { index in
-            CGRect(x: padding + CGFloat(index) * (thumbnailWidth + spacing), y: padding,
-                   width: thumbnailWidth, height: thumbnailHeight)
-        }
+        pickerView.layouts = activeLayouts
+        pickerView.thumbnails = geometry.thumbnails
+        pickerView.verticalDividerX = geometry.verticalDividerX
+        pickerView.horizontalDividerY = geometry.horizontalDividerY
         pickerView.caption = showsCaption ? "Drop on a layout to snap there" : nil
         pickerView.hovered = nil
         pickerView.needsDisplay = true
@@ -115,6 +251,7 @@ final class DragSnapLayoutPicker {
         isShowing = false
         screenFrame = nil
         currentShowsCaption = false
+        currentExtraLayouts = []
         pickerView.hovered = nil
         guard let window else { return }
         NSAnimationContext.runAnimationGroup { context in
@@ -142,16 +279,33 @@ final class DragSnapLayoutPicker {
             return nil
         }
         let local = CGPoint(x: point.x - window.frame.minX, y: point.y - window.frame.minY)
-        let extraTop = currentShowsCaption ? captionHeight : 0
-        guard let layout = pickerView.thumbnails.firstIndex(where: {
-            $0.insetBy(dx: -spacing / 2, dy: -padding - extraTop).contains(local)
+        let extraTop = currentShowsCaption ? Self.captionHeight : 0
+        let topRowMaxY = pickerView.thumbnails.map(\.maxY).max() ?? 0
+        guard let layout = pickerView.thumbnails.indices.min(by: { a, b in
+            distance(local, to: pickerView.thumbnails[a]) < distance(local, to: pickerView.thumbnails[b])
         }) else {
+            setHovered(nil)
+            return nil
+        }
+        let candidateRect = pickerView.thumbnails[layout]
+        let isTopRow = abs(candidateRect.maxY - topRowMaxY) < 1
+        let hitRect = CGRect(
+            x: candidateRect.minX - Self.spacing / 2,
+            y: candidateRect.minY - Self.padding,
+            width: candidateRect.width + Self.spacing,
+            height: candidateRect.height + Self.padding * 2 + (isTopRow ? extraTop : 0)
+        )
+        guard hitRect.contains(local), activeLayouts.indices.contains(layout) else {
             setHovered(nil)
             return nil
         }
         let tiles = pickerView.tiles(of: layout)
         let zone = tiles.indices.min { distance(local, to: tiles[$0]) < distance(local, to: tiles[$1]) } ?? 0
-        let pick = Pick(layout: layout, zone: zone)
+        guard activeLayouts[layout].indices.contains(zone) else {
+            setHovered(nil)
+            return nil
+        }
+        let pick = Pick(layout: layout, zone: zone, relativeFrame: activeLayouts[layout][zone])
         setHovered(pick)
         return pick
     }
@@ -170,15 +324,19 @@ final class DragSnapLayoutPicker {
 }
 
 private final class PickerView: NSView {
+    var layouts: [[CGRect]] = DragSnapLayoutPicker.layouts
     var thumbnails: [CGRect] = []
     var hovered: DragSnapLayoutPicker.Pick?
     var caption: String?
+    var verticalDividerX: CGFloat?
+    var horizontalDividerY: CGFloat?
 
     private let tileGap: CGFloat = 3
 
     func tiles(of layout: Int) -> [CGRect] {
+        guard thumbnails.indices.contains(layout), layouts.indices.contains(layout) else { return [] }
         let thumbnail = thumbnails[layout]
-        return DragSnapLayoutPicker.layouts[layout].map { zone in
+        return layouts[layout].map { zone in
             CGRect(
                 x: thumbnail.minX + zone.minX * thumbnail.width,
                 y: thumbnail.minY + zone.minY * thumbnail.height,
@@ -196,7 +354,7 @@ private final class PickerView: NSView {
         background.lineWidth = 1
         background.stroke()
 
-        if let caption, let topOfThumbnails = thumbnails.first?.maxY {
+        if let caption, let topOfThumbnails = thumbnails.map(\.maxY).max() {
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = .center
             let attributes: [NSAttributedString.Key: Any] = [
@@ -215,10 +373,28 @@ private final class PickerView: NSView {
             attrString.draw(in: captionRect)
         }
 
+        if let dividerX = verticalDividerX, let first = thumbnails.first {
+            let line = NSBezierPath()
+            line.move(to: CGPoint(x: dividerX, y: first.minY + 4))
+            line.line(to: CGPoint(x: dividerX, y: first.maxY - 4))
+            NSColor.white.withAlphaComponent(0.18).setStroke()
+            line.lineWidth = 1
+            line.stroke()
+        }
+
+        if let dividerY = horizontalDividerY {
+            let line = NSBezierPath()
+            line.move(to: CGPoint(x: DragSnapLayoutPicker.padding + 6, y: dividerY))
+            line.line(to: CGPoint(x: bounds.width - DragSnapLayoutPicker.padding - 6, y: dividerY))
+            NSColor.white.withAlphaComponent(0.18).setStroke()
+            line.lineWidth = 1
+            line.stroke()
+        }
+
         for layout in thumbnails.indices {
             for (zone, tile) in tiles(of: layout).enumerated() {
                 let path = NSBezierPath(roundedRect: tile, xRadius: 4, yRadius: 4)
-                let isHovered = hovered == DragSnapLayoutPicker.Pick(layout: layout, zone: zone)
+                let isHovered = hovered?.layout == layout && hovered?.zone == zone
                 (isHovered ? NSColor.systemBlue : NSColor.white.withAlphaComponent(0.18)).setFill()
                 path.fill()
             }

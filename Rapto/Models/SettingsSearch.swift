@@ -142,6 +142,14 @@ enum SettingsSearch {
             keywords: ["float", "pin", "always on top", "ontop", "unmanaged", "double click", "double-click"]
         ),
         SettingsSearchEntry(
+            id: "behavior.dragSnapTopBar",
+            title: "Drag to Snap Top Layout Bar",
+            subtitle: "Choose which custom layouts appear in the top bar when dragging a window in Drag to Snap",
+            section: "Drag to Snap",
+            tab: .behavior,
+            keywords: ["drag to snap", "top bar", "picker", "custom layouts", "favorite", "snap bar", "zones"]
+        ),
+        SettingsSearchEntry(
             id: "behavior.snapBack",
             title: "Snap Back",
             subtitle: "Return windows to their assigned slot after dragging in Manual mode",

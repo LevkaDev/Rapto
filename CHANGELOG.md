@@ -57,6 +57,11 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
   joining occupied ones.
 
 ### Changed
+- **Custom layouts in the Drag to Snap top bar** (`DragSnapLayoutPicker`, `DragSnapService`,
+  `AppState+Layouts`, `BehaviorSettingsView`, `GridTemplatePicker`, `SettingsBackup`): users can
+  now opt individual custom layouts into the top Drag to Snap layout picker (`dragSnapPickerTemplateIDs`)
+  from Settings → Behavior or the Layout Overlay context menu; the picker separates custom layouts
+  with a divider and wraps onto additional rows when needed so it stays inside the screen.
 - **Magnetic snapping, one-click split, and clean draft completion in the custom layout editor** (`ZoneCreatorView`,
   `ZoneEditorGeometry`, `OverlayView`, `AppState+Layouts`): moving or resizing a zone now snaps
   within `12 pt` to screen edges, neighboring zone edges/centers, and `1/4`, `1/3`, `1/2`, `2/3`,

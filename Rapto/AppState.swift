@@ -930,6 +930,11 @@ class AppState: ObservableObject {
             .filter { $0 != PredefinedTemplates.retiredTwoOneTwoID }
     )
 
+    /// Custom layouts pinned to the top Drag to Snap layout picker bar.
+    @Published var dragSnapPickerTemplateIDs: Set<UUID> = Set(
+        (UserDefaults.standard.stringArray(forKey: AppState.dragSnapPickerTemplatesKey) ?? []).compactMap(UUID.init(uuidString:))
+    )
+
     // MARK: - Initialization
     
     init() {
@@ -1092,6 +1097,9 @@ class AppState: ObservableObject {
         
         self.dragSnapService?.layoutZones = { [weak self] screen in
             self?.dragSnapTemplate(for: screen)?.zones.map(\.relativeFrame) ?? []
+        }
+        self.dragSnapService?.pickerCustomLayouts = { [weak self] in
+            self?.dragSnapPickerCustomLayouts.map { $0.zones.map(\.relativeFrame) } ?? []
         }
         
         debugLog("AppState"," Configured AutoTilingService with \(allTemplates.count) templates")

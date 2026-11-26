@@ -22,6 +22,11 @@ struct GridTemplatePicker<TrailingContent: View>: View {
     
     /// IDs of custom templates (for showing delete option)
     var customTemplateIDs: Set<UUID> = []
+
+    /// Custom layout IDs currently shown in the top Drag to Snap bar
+    var dragSnapPickerTemplateIDs: Set<UUID> = []
+
+    var onToggleDragSnapPicker: ((GridTemplate) -> Void)? = nil
     
     var onHideStandard: ((GridTemplate) -> Void)? = nil
     
@@ -133,6 +138,14 @@ struct GridTemplatePicker<TrailingContent: View>: View {
         .overlay(alignment: .topTrailing) {
             if !isCustom, let onHideStandard, hoveredTemplateID == template.id {
                 badge("Hide", systemImage: "eye.slash") { onHideStandard(template) }
+            } else if isCustom, dragSnapPickerTemplateIDs.contains(template.id) {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(4)
+                    .background(Circle().fill(Color.accentColor))
+                    .offset(x: 4, y: -4)
+                    .help("Shown in the top Drag to Snap bar")
             }
         }
         .onHover { hovering in
@@ -144,6 +157,19 @@ struct GridTemplatePicker<TrailingContent: View>: View {
         }
         .contextMenu {
             if isCustom {
+                if let onToggleDragSnapPicker {
+                    let isPinned = dragSnapPickerTemplateIDs.contains(template.id)
+                    Button {
+                        onToggleDragSnapPicker(template)
+                    } label: {
+                        Label(
+                            isPinned ? "Remove from Drag to Snap Bar" : "Show in Drag to Snap Bar",
+                            systemImage: isPinned ? "pin.slash" : "pin"
+                        )
+                    }
+                    Divider()
+                }
+
                 Button {
                     renamingTemplate = template
                 } label: {

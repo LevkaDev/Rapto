@@ -182,6 +182,59 @@ struct BehaviorSettingsView: View {
                 }
             }
 
+            SettingsSection("Drag to Snap", icon: "hand.draw") {
+                Text("Choose which custom layouts appear in the top layout bar when dragging a window in Drag to Snap (Standard Zones).")
+                    .font(.callout)
+                    .foregroundStyle(.neuTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 8)
+
+                if !appState.customTemplates.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(appState.customTemplates) { template in
+                            HStack(spacing: 12) {
+                                TemplateZoneGlyph(
+                                    template: template,
+                                    isHighlighted: appState.isInDragSnapPicker(template)
+                                )
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(template.name)
+                                        .font(.body)
+                                    Text("\(template.zones.count) zone\(template.zones.count == 1 ? "" : "s")")
+                                        .font(.caption)
+                                        .foregroundStyle(.neuTextSecondary)
+                                }
+
+                                Spacer()
+
+                                Toggle("", isOn: Binding(
+                                    get: { appState.isInDragSnapPicker(template) },
+                                    set: { appState.setInDragSnapPicker($0, for: template) }
+                                ))
+                                .toggleStyle(.neu)
+                                .labelsHidden()
+                                .accessibilityLabel("Show \(template.name) in Drag to Snap bar")
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+
+                            if template.id != appState.customTemplates.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                    .neuInset(cornerRadius: AppRadius.md)
+                } else {
+                    Text("No custom layouts yet — create one from the Layout Overlay")
+                        .font(.callout)
+                        .foregroundStyle(.neuTextSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .neuInset(cornerRadius: AppRadius.md)
+                }
+            }
+
             SettingsSection("Manual Mode", icon: "square.grid.2x2") {
                 SettingsRow("Minimize Others", subtitle: "Minimize unassigned windows after applying a layout from the overlay") {
                     Toggle("", isOn: $appState.minimizeOthersOnApply)
