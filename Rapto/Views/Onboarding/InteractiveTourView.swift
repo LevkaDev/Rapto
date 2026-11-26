@@ -36,7 +36,7 @@ nonisolated enum TourTaskID: String, Equatable, Hashable, CaseIterable, Sendable
 
     var title: String {
         switch self {
-        case .dragToEdge: return "Drag a window to the left or right edge"
+        case .dragToEdge: return "Snap a window near a screen edge"
         case .dragToTopPicker: return "Drop a window on the top layout bar"
         case .arrangeWindows: return "Arrange your open windows"
         case .swapWindows: return "Swap two windows"
@@ -49,7 +49,7 @@ nonisolated enum TourTaskID: String, Equatable, Hashable, CaseIterable, Sendable
 
     var detail: String {
         switch self {
-        case .dragToEdge: return "Pull any title bar to the edge — it snaps to half the screen"
+        case .dragToEdge: return "Move near the left, right or bottom edge and let go as soon as the highlight appears"
         case .dragToTopPicker: return "Start dragging to reveal the bar at the top, then drop on a zone"
         case .arrangeWindows: return "Click Arrange below to place windows into the grid"
         case .swapWindows: return "Drag one window on top of another and drop"
@@ -76,7 +76,7 @@ nonisolated struct InteractiveTourModel: Equatable, Sendable {
         var list: [TourTaskID]
         switch mode {
         case .dragSnap, .none:
-            list = [.dragToEdge, .dragToTopPicker]
+            list = [.dragToTopPicker, .dragToEdge]
         case .autoTiling:
             list = alreadyArranged ? [.swapWindows, .resizeSharedBorder] : [.arrangeWindows, .swapWindows, .resizeSharedBorder]
         case .manualAssignment:
@@ -186,8 +186,11 @@ struct InteractiveTourView: View {
         .onChange(of: appState.hasUndoableFirstArrange) { _, _ in
             onLayoutChange()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .dragSnapDidSnap).receive(on: RunLoop.main)) { _ in
-            complete(.dragToEdge)
+        .onReceive(NotificationCenter.default.publisher(for: .dragSnapDidSnap).receive(on: RunLoop.main)) { notification in
+            let fromPicker = notification.userInfo?["fromPicker"] as? Bool ?? false
+            if !fromPicker {
+                complete(.dragToEdge)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .dragSnapDidSnapFromPicker).receive(on: RunLoop.main)) { _ in
             complete(.dragToTopPicker)

@@ -711,10 +711,17 @@ class DragSnapService: ObservableObject {
         )
         let cgFrame = screenManager.convertToCGCoordinates(frame: absoluteFrame, for: targetScreen)
 
+        let isPickerSnap: Bool
+        if case .pickerZone = zone.edge {
+            isPickerSnap = true
+        } else {
+            isPickerSnap = false
+        }
+
         if TourSandboxWindows.contains(window.windowID) {
             _ = TourSandboxWindows.shared.setCGFrame(cgFrame, for: window.windowID)
-            NotificationCenter.default.post(name: .dragSnapDidSnap, object: nil)
-            if case .pickerZone = zone.edge {
+            NotificationCenter.default.post(name: .dragSnapDidSnap, object: nil, userInfo: ["fromPicker": isPickerSnap])
+            if isPickerSnap {
                 NotificationCenter.default.post(name: .dragSnapDidSnapFromPicker, object: nil)
             }
             return
@@ -739,8 +746,8 @@ class DragSnapService: ObservableObject {
         }
         let sameZone = snappedWindows.values.filter { groupKey(of: $0) == groupKey(of: snapped) }.count
         debugLog("DragSnapService", "Snapped window \(window.windowID) (\(window.ownerName)) to \(zone.displayName) \(cgFrame) on \(screenID), got \(actualFrame); \(sameZone) snapped window(s) in this zone")
-        NotificationCenter.default.post(name: .dragSnapDidSnap, object: nil)
-        if case .pickerZone = zone.edge {
+        NotificationCenter.default.post(name: .dragSnapDidSnap, object: nil, userInfo: ["fromPicker": isPickerSnap])
+        if isPickerSnap {
             NotificationCenter.default.post(name: .dragSnapDidSnapFromPicker, object: nil)
         }
         NotificationCenter.default.post(name: .dragSnapGroupsDidChange, object: nil)

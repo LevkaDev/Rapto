@@ -11,15 +11,16 @@ import Testing
 @Suite("Interactive Tour & Auto-Tune Copy Tests")
 struct InteractiveTourTests {
 
-    @Test("Drag to Snap tour stays mouse-first and appends notch hint only on notched laptops")
+    @Test("Drag to Snap tour starts with top layout bar before edge snap and appends notch hint only on notched laptops")
     func dragSnapTasks() {
         let regular = InteractiveTourModel(mode: .dragSnap, hasNotchedHoverBar: false, alreadyArranged: false)
-        #expect(regular.tasks == [.dragToEdge, .dragToTopPicker])
-        #expect(regular.activeTask == .dragToEdge)
+        #expect(regular.tasks == [.dragToTopPicker, .dragToEdge])
+        #expect(regular.activeTask == .dragToTopPicker)
         #expect(!regular.isAllDone)
+        #expect(TourTaskID.dragToEdge.detail.contains("let go as soon as the highlight appears"))
 
         let notched = InteractiveTourModel(mode: .dragSnap, hasNotchedHoverBar: true, alreadyArranged: false)
-        #expect(notched.tasks == [.dragToEdge, .dragToTopPicker, .revealNotchBar])
+        #expect(notched.tasks == [.dragToTopPicker, .dragToEdge, .revealNotchBar])
     }
 
     @Test("Auto-tiling and Manual tours skip the Arrange task when windows were already arranged")
@@ -46,11 +47,11 @@ struct InteractiveTourTests {
         #expect(model.markCompleted(.swapWindows) == false)
         #expect(model.completedCount == 0)
 
-        #expect(model.markCompleted(.dragToEdge) == true)
-        #expect(model.markCompleted(.dragToEdge) == false)
-        #expect(model.activeTask == .dragToTopPicker)
-
         #expect(model.markCompleted(.dragToTopPicker) == true)
+        #expect(model.markCompleted(.dragToTopPicker) == false)
+        #expect(model.activeTask == .dragToEdge)
+
+        #expect(model.markCompleted(.dragToEdge) == true)
         #expect(model.activeTask == .revealNotchBar)
 
         #expect(model.markCompleted(.revealNotchBar) == true)
