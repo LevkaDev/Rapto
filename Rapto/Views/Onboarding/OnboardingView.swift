@@ -37,6 +37,7 @@ struct OnboardingView: View {
     @State private var shortcuts = OnboardingShortcuts()
     @State private var macTilingOptions = MacOSTiling.enabledOptions()
     @State private var didArrangeDuringOnboarding = false
+    @State private var didUndoArrange = false
 
     private var dominantProfile: DisplayProfile {
         DisplayProfile.dominant(for: appState.screenManager.allScreens())
@@ -155,7 +156,20 @@ struct OnboardingView: View {
         case .quickStart:
             QuickStartStepView(
                 mode: chosenMode,
-                didArrange: $didArrangeDuringOnboarding
+                didArrange: $didArrangeDuringOnboarding,
+                onArrange: {
+                    applyModePreferences()
+                    let arranged = appState.arrangeWindowsForFirstRun(mode: chosenMode)
+                    if arranged {
+                        didUndoArrange = false
+                    }
+                    return arranged
+                },
+                onUndo: {
+                    appState.undoFirstRunArrange()
+                    didArrangeDuringOnboarding = false
+                    didUndoArrange = true
+                }
             )
         }
     }
@@ -184,9 +198,11 @@ struct OnboardingView: View {
             }
 
             if currentStep == .quickStart {
-                Button("Done", action: onComplete)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                Button("Done") {
+                    finishOnboardingWithoutTour()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
             }
 
             if currentStep != .welcomePermissions {
@@ -236,16 +252,36 @@ struct OnboardingView: View {
                 requestAccessibilityPermission()
             }
         case .setup:
-            applyChosenMode()
+            // Wait until Quick Start (Arrange Now / Start Short Tour / Done) to switch the active
+            // desktop's mode so tiling doesn't raise user windows on top of onboarding mid-flow.
             goForward()
         case .macTiling:
             goForward()
         case .quickStart:
-            if let onStartTour {
-                onStartTour(chosenMode, didArrangeDuringOnboarding)
-            } else {
-                onComplete()
-            }
+            startShortTour()
+        }
+    }
+
+    private func finishOnboardingWithoutTour() {
+        applyModePreferences()
+        if !didArrangeDuringOnboarding && !didUndoArrange {
+            applyChosenModeToAllScreens()
+        }
+        onComplete()
+    }
+
+    private func startShortTour() {
+        applyModePreferences()
+        // For Drag to Snap, activate immediately (it never moves existing windows).
+        // For Manual / Auto-tiling, if the user didn't click Arrange Now yet, the tour's own
+        // first task ("Arrange your open windows") activates it on demand with Undo support.
+        if chosenMode == .dragSnap || didArrangeDuringOnboarding {
+            applyChosenModeToAllScreens()
+        }
+        if let onStartTour {
+            onStartTour(chosenMode, didArrangeDuringOnboarding)
+        } else {
+            onComplete()
         }
     }
 
@@ -268,9 +304,8 @@ struct OnboardingView: View {
 
     // MARK: - Mode
 
-    /// Makes the choice the default for every desktop and turns it on for the current one.
-    /// Screens already in this mode are left alone, so their slots aren't cleared.
-    private func applyChosenMode() {
+    /// Saves the chosen mode defaults and Auto-tiling limits without moving windows on screen yet.
+    private func applyModePreferences() {
         let mode = chosenMode
         if mode == .autoTiling {
             let dominant = DisplayProfile.dominant(for: appState.screenManager.allScreens())
@@ -286,10 +321,15 @@ struct OnboardingView: View {
             appState.applyPerScreenAutoTilingOverrides(dominantMaxWindows: autoTilingMaxWindows)
         }
         appState.defaultModeForNewSpaces = mode
+        debugLog("Onboarding", "Chose mode \(mode.rawValue)")
+    }
+
+    /// Turns the chosen mode on across connected screens that aren't already in it.
+    private func applyChosenModeToAllScreens() {
+        let mode = chosenMode
         for screen in appState.screenManager.allScreens() where appState.mode(for: screen) != mode {
             appState.setMode(mode, for: screen)
         }
-        debugLog("Onboarding", "Chose mode \(mode.rawValue)")
     }
 
     static func suggestedMaxWindows() -> Int {

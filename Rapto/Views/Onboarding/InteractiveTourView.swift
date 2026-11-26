@@ -114,14 +114,22 @@ struct InteractiveTourView: View {
     @State private var model: InteractiveTourModel
     @State private var hasEnoughWindows: Bool = false
 
+    let onLayoutChange: () -> Void
     let onFinish: () -> Void
 
-    init(mode: TilingMode, hasNotchedHoverBar: Bool, alreadyArranged: Bool, onFinish: @escaping () -> Void) {
+    init(
+        mode: TilingMode,
+        hasNotchedHoverBar: Bool,
+        alreadyArranged: Bool,
+        onLayoutChange: @escaping () -> Void = {},
+        onFinish: @escaping () -> Void
+    ) {
         _model = State(initialValue: InteractiveTourModel(
             mode: mode,
             hasNotchedHoverBar: hasNotchedHoverBar,
             alreadyArranged: alreadyArranged
         ))
+        self.onLayoutChange = onLayoutChange
         self.onFinish = onFinish
     }
 
@@ -166,9 +174,17 @@ struct InteractiveTourView: View {
         .onAppear {
             refreshWindowCount()
             triggerNotchPointerIfActive()
+            onLayoutChange()
         }
         .onChange(of: model.activeTask) { _, _ in
             triggerNotchPointerIfActive()
+            onLayoutChange()
+        }
+        .onChange(of: model.isAllDone) { _, _ in
+            onLayoutChange()
+        }
+        .onChange(of: appState.hasUndoableFirstArrange) { _, _ in
+            onLayoutChange()
         }
         .onReceive(NotificationCenter.default.publisher(for: .dragSnapDidSnap).receive(on: RunLoop.main)) { _ in
             complete(.dragToEdge)

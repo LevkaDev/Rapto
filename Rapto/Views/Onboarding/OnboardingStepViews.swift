@@ -341,6 +341,8 @@ struct QuickStartStepView: View {
 
     let mode: TilingMode
     @Binding var didArrange: Bool
+    var onArrange: (() -> Bool)? = nil
+    var onUndo: (() -> Void)? = nil
     @State private var openWindowCount: Int = 0
 
     var body: some View {
@@ -371,15 +373,20 @@ struct QuickStartStepView: View {
 
                     if appState.hasUndoableFirstArrange {
                         Button("Put Back") {
-                            appState.undoFirstRunArrange()
-                            didArrange = false
+                            if let onUndo {
+                                onUndo()
+                            } else {
+                                appState.undoFirstRunArrange()
+                                didArrange = false
+                            }
                         }
                         .buttonStyle(.bordered)
                     }
 
                     if openWindowCount >= 2 {
                         Button(didArrange ? "Arrange Again" : "Arrange Now") {
-                            if appState.arrangeWindowsForFirstRun(mode: mode) {
+                            let arranged = onArrange?() ?? appState.arrangeWindowsForFirstRun(mode: mode)
+                            if arranged {
                                 didArrange = true
                             }
                         }

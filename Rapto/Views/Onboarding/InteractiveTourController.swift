@@ -13,6 +13,7 @@ final class InteractiveTourController {
     static let shared = InteractiveTourController()
 
     private var panel: NSPanel?
+    private var hostingView: NSHostingView<AnyView>?
     private weak var appState: AppState?
 
     private init() {}
@@ -35,13 +36,18 @@ final class InteractiveTourController {
             mode: mode,
             hasNotchedHoverBar: appState.hasNotchedHoverBar,
             alreadyArranged: alreadyArranged,
+            onLayoutChange: { [weak self] in
+                self?.resizeToFit()
+            },
             onFinish: { [weak self] in
                 self?.close()
             }
         )
         .environmentObject(appState)
 
-        let hosting = NSHostingView(rootView: tourView)
+        let hosting = NSHostingView(rootView: AnyView(tourView))
+        hosting.sizingOptions = [.intrinsicContentSize]
+        self.hostingView = hosting
         let size = hosting.fittingSize
 
         let panel = NSPanel(
@@ -74,9 +80,31 @@ final class InteractiveTourController {
         self.panel = panel
     }
 
+    /// Resizes the floating HUD smoothly when tasks expand/collapse or buttons change,
+    /// preserving the bottom-center anchor so the card never clips or jumps.
+    func resizeToFit() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel = self.panel, let hosting = self.hostingView else { return }
+            hosting.layoutSubtreeIfNeeded()
+            let newSize = hosting.fittingSize
+            guard newSize.width > 0, newSize.height > 0 else { return }
+            let current = panel.frame
+            let updated = NSRect(
+                x: round(current.midX - newSize.width / 2),
+                y: current.minY,
+                width: newSize.width,
+                height: newSize.height
+            )
+            if abs(updated.height - current.height) > 0.5 || abs(updated.width - current.width) > 0.5 {
+                panel.setFrame(updated, display: true, animate: false)
+            }
+        }
+    }
+
     func close() {
         let existing = panel
         panel = nil
+        hostingView = nil
         appState?.isInteractiveTourActive = false
         appState?.closeTourSandboxWindows()
         appState?.clearFirstRunArrangeUndo()

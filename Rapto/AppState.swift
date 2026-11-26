@@ -576,8 +576,10 @@ class AppState: ObservableObject {
     /// True while the compact floating interactive tour HUD is open.
     @Published var isInteractiveTourActive: Bool = false
 
-    /// Saved pre-arrange CG window frames during onboarding/tour so "Put Windows Back" restores them cleanly.
+    /// Saved pre-arrange CG window frames and screen mode during onboarding/tour so "Put Back" restores cleanly.
     var preArrangeWindowFrames: [CGWindowID: CGRect] = [:]
+    var preArrangeScreenID: String?
+    var preArrangeScreenMode: TilingMode?
     @Published var hasUndoableFirstArrange: Bool = false
     
     var hasCompletedOnboarding: Bool {

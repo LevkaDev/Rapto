@@ -84,6 +84,12 @@ final class OnboardingWindowController {
         NSApp.activate()
     }
     
+    func bringToFront() {
+        guard let window else { return }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
     func close() {
         window?.close()
     }

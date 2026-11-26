@@ -91,10 +91,13 @@ extension AppState {
     @discardableResult
     func arrangeWindowsForFirstRun(mode: TilingMode) -> Bool {
         let screen = screenManager.activeScreen()
+        let screenID = screenManager.identifier(for: screen)
         let windows = eligibleWindowsForFirstArrange(on: screen)
         guard !windows.isEmpty else { return false }
 
         if preArrangeWindowFrames.isEmpty {
+            preArrangeScreenID = screenID
+            preArrangeScreenMode = self.mode(for: screen)
             for window in windows {
                 preArrangeWindowFrames[window.windowID] = window.frame
             }
@@ -106,12 +109,20 @@ extension AppState {
             if self.mode(for: screen) != .autoTiling {
                 setMode(.autoTiling, for: screen)
             } else {
-                autoTilingService?.redistributeNow(forScreenID: screenManager.identifier(for: screen))
+                autoTilingService?.redistributeNow(forScreenID: screenID)
             }
         case .manualAssignment:
-            let template = DisplayProfile.forScreen(screen).suggestedManualTemplate
-            applyTemplateToScreen(template: template, screen: screen)
+            if self.mode(for: screen) != .manualAssignment {
+                setMode(.manualAssignment, for: screen)
+            }
+            if !layoutManager.state(forScreenID: screenID).isActive {
+                let template = DisplayProfile.forScreen(screen).suggestedManualTemplate
+                applyTemplateToScreen(template: template, screen: screen)
+            }
         case .dragSnap, .none:
+            if self.mode(for: screen) != .dragSnap {
+                setMode(.dragSnap, for: screen)
+            }
             let profile = DisplayProfile.forScreen(screen)
             let template: GridTemplate = windows.count == 1
                 ? PredefinedTemplates.full
@@ -126,28 +137,65 @@ extension AppState {
         }
 
         hasUndoableFirstArrange = !preArrangeWindowFrames.isEmpty
+        keepOnboardingInFrontIfVisible()
         return true
     }
 
-    /// Restores every window moved by `arrangeWindowsForFirstRun` to its exact pre-arrange frame.
+    /// Restores every window moved by `arrangeWindowsForFirstRun` to its exact pre-arrange frame,
+    /// temporarily disarming tiling/snap-back on that screen so windows stay where put.
     func undoFirstRunArrange() {
         guard !preArrangeWindowFrames.isEmpty else { return }
         let saved = preArrangeWindowFrames
+        let savedScreenID = preArrangeScreenID
+        let savedMode = preArrangeScreenMode
         clearFirstRunArrangeUndo()
+
+        if let savedScreenID, let screen = screenManager.screen(for: savedScreenID) {
+            if let savedMode, savedMode != self.mode(for: screen) {
+                setMode(savedMode, for: screen)
+            }
+            switch self.mode(for: screen) {
+            case .autoTiling:
+                autoTilingService?.stop(forScreenID: savedScreenID)
+            case .manualAssignment:
+                snapBackService?.stop(forScreenID: savedScreenID)
+                layoutManager.clearLayout(forScreenID: savedScreenID)
+                groupIndicatorManager?.updateIndicators()
+            case .dragSnap, .none:
+                break
+            }
+        }
+
         let current = windowManager.enumerateWindows()
         for (windowID, frame) in saved {
             guard let window = current.first(where: { $0.windowID == windowID }) else { continue }
             _ = accessibilityService.setWindowFrame(window, frame: frame)
         }
+        keepOnboardingInFrontIfVisible()
     }
 
     func clearFirstRunArrangeUndo() {
         preArrangeWindowFrames.removeAll()
+        preArrangeScreenID = nil
+        preArrangeScreenMode = nil
         hasUndoableFirstArrange = false
+    }
+
+    /// Keeps the onboarding window above newly raised apps (such as Electron windows raised asynchronously).
+    private func keepOnboardingInFrontIfVisible() {
+        guard isOnboardingVisible else { return }
+        OnboardingWindowController.shared.bringToFront()
+        for delay in [0.15, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard self?.isOnboardingVisible == true else { return }
+                OnboardingWindowController.shared.bringToFront()
+            }
+        }
     }
 
     func openTourSandboxWindows() {
         TourSandboxWindows.shared.openSamplePair(on: screenManager.activeScreen())
+        keepOnboardingInFrontIfVisible()
     }
 
     func closeTourSandboxWindows() {
