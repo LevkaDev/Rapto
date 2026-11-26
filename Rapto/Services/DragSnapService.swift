@@ -129,6 +129,9 @@ class DragSnapService: ObservableObject {
         let pid: pid_t
         /// Frame of the zone it was snapped to: windows with the same zone form a group
         var zoneFrame: CGRect
+        /// Relative zone (0...1, AppKit origin) used to recompute the frame when gaps change;
+        /// cleared after a manual group resize so gap changes do not overwrite custom dimensions
+        var relativeFrame: CGRect?
         let screenID: String
     }
     
@@ -262,8 +265,12 @@ class DragSnapService: ObservableObject {
     }
     
     private func isClose(_ a: CGRect, _ b: CGRect) -> Bool {
-        abs(a.minX - b.minX) <= frameTolerance && abs(a.minY - b.minY) <= frameTolerance
-            && abs(a.width - b.width) <= frameTolerance && abs(a.height - b.height) <= frameTolerance
+        Self.framesClose(a, b, tolerance: frameTolerance)
+    }
+
+    nonisolated static func framesClose(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
+        abs(a.minX - b.minX) <= tolerance && abs(a.minY - b.minY) <= tolerance
+            && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
     }
     
     /// Resizing a window of a group gives the same frame to the other windows of the group
@@ -283,10 +290,12 @@ class DragSnapService: ObservableObject {
         debugLog("DragSnapService", "Resizing group of \(mates.count + 1) windows to \(newFrame)")
         snappedWindows[pressed.windowID]?.snappedFrame = newFrame
         snappedWindows[pressed.windowID]?.zoneFrame = newFrame
+        snappedWindows[pressed.windowID]?.relativeFrame = nil
         for (windowID, mate) in mates {
             setFrame(newFrame, of: mate.axWindow, pid: mate.pid)
             snappedWindows[windowID]?.snappedFrame = frame(of: mate.axWindow) ?? newFrame
             snappedWindows[windowID]?.zoneFrame = newFrame
+            snappedWindows[windowID]?.relativeFrame = nil
         }
         NotificationCenter.default.post(name: .dragSnapGroupsDidChange, object: nil)
     }
@@ -302,6 +311,88 @@ class DragSnapService: ObservableObject {
             snappedWindows[windowID]?.snappedFrame = frame(of: snapped.axWindow) ?? zone
         }
         debugLog("DragSnapService", "Moved \(onScreen.count) snapped window(s) on \(screenID) from visible area \(old) to \(new)")
+        NotificationCenter.default.post(name: .dragSnapGroupsDidChange, object: nil)
+    }
+
+    nonisolated struct SnappedGapCandidate: Equatable {
+        let windowID: CGWindowID
+        let screenID: String
+        let snappedFrame: CGRect
+        let zoneFrame: CGRect
+        let relativeFrame: CGRect?
+    }
+
+    nonisolated struct SnappedGapUpdate: Equatable {
+        let windowID: CGWindowID
+        let targetFrame: CGRect
+    }
+
+    /// Plans which snapped windows on `screenID` should be repositioned after gap settings change.
+    /// Windows that are off-screen (including on other desktops), manually moved/resized, or
+    /// already at the target frame are skipped.
+    nonisolated static func gapRepositionTargets(
+        forScreenID screenID: String,
+        snapped: [SnappedGapCandidate],
+        visibleFrames: [CGWindowID: CGRect],
+        frameTolerance: CGFloat = 4,
+        targetFrame: (CGRect) -> CGRect
+    ) -> [SnappedGapUpdate] {
+        snapped.compactMap { candidate in
+            guard candidate.screenID == screenID,
+                  let relativeFrame = candidate.relativeFrame,
+                  let currentFrame = visibleFrames[candidate.windowID],
+                  framesClose(currentFrame, candidate.snappedFrame, tolerance: frameTolerance) else {
+                return nil
+            }
+            let updatedFrame = targetFrame(relativeFrame)
+            guard !framesClose(updatedFrame, candidate.zoneFrame, tolerance: 0.5) else {
+                return nil
+            }
+            return SnappedGapUpdate(windowID: candidate.windowID, targetFrame: updatedFrame)
+        }
+    }
+
+    /// Recomputes and applies frames for visible snapped windows on `screenID` after gap settings change.
+    func reapplyGaps(forScreenID screenID: String) {
+        guard activeScreens.contains(screenID),
+              let screen = screenManager.screen(for: screenID) else { return }
+
+        let visibleFrames = Dictionary(
+            windowManager.enumerateWindows().map { ($0.windowID, $0.frame) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let screenFrame = screenManager.visibleFrame(for: screen)
+        let candidates = snappedWindows.map { windowID, snapped in
+            SnappedGapCandidate(
+                windowID: windowID,
+                screenID: snapped.screenID,
+                snappedFrame: snapped.snappedFrame,
+                zoneFrame: snapped.zoneFrame,
+                relativeFrame: snapped.relativeFrame
+            )
+        }
+        let updates = Self.gapRepositionTargets(
+            forScreenID: screenID,
+            snapped: candidates,
+            visibleFrames: visibleFrames,
+            frameTolerance: frameTolerance
+        ) { relativeFrame in
+            let absoluteFrame = screenManager.calculateAbsoluteFrame(relativeFrame: relativeFrame, in: screenFrame)
+            return screenManager.convertToCGCoordinates(frame: absoluteFrame, for: screen)
+        }
+        guard !updates.isEmpty else { return }
+
+        var movedCount = 0
+        for update in updates {
+            guard let snapped = snappedWindows[update.windowID],
+                  AppResponsiveness.isResponding(snapped.pid) else { continue }
+            setFrame(update.targetFrame, of: snapped.axWindow, pid: snapped.pid)
+            snappedWindows[update.windowID]?.zoneFrame = update.targetFrame
+            snappedWindows[update.windowID]?.snappedFrame = frame(of: snapped.axWindow) ?? update.targetFrame
+            movedCount += 1
+        }
+        guard movedCount > 0 else { return }
+        debugLog("DragSnapService", "Reapplied gaps to \(movedCount) snapped window(s) on \(screenID)")
         NotificationCenter.default.post(name: .dragSnapGroupsDidChange, object: nil)
     }
     
@@ -738,7 +829,7 @@ class DragSnapService: ObservableObject {
         let actualFrame = frame(of: axWindow) ?? cgFrame
         let snapped = SnappedWindow(
             snappedFrame: actualFrame, sizeBefore: sizeBefore, axWindow: axWindow,
-            pid: window.ownerPID, zoneFrame: cgFrame, screenID: screenID
+            pid: window.ownerPID, zoneFrame: cgFrame, relativeFrame: zone.resultFrame, screenID: screenID
         )
         snappedWindows[window.windowID] = snapped
         if snappedWindows.count > 200 {
