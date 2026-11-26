@@ -123,33 +123,30 @@ struct SpaceBarView: View {
 
     private var windowFlowButton: some View {
         let isActive = controller.isWindowFlowOpen
+        let isHovered = isHoveringFlowButton
         let tooltip = controller.windowFlowShortcut.map { "Window Flow (\($0))" } ?? "Window Flow"
         return WindowFlowBarIcon(
             color: isActive ? currentDesktopColor : ink,
-            isHighlighted: isHoveringFlowButton || isActive
+            isHighlighted: isHovered || isActive
         )
-        .frame(width: iconSize + 4, height: iconSize)
-        .padding(.horizontal, 3)
-        .padding(.vertical, 1)
+        .frame(width: iconSize * 0.68, height: iconSize * 0.58)
+        .frame(width: iconSize, height: iconSize)
         .background {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(
-                    isActive
-                        ? currentDesktopColor.opacity(0.24)
-                        : (isHoveringFlowButton ? ink.opacity(0.16) : (isPlain ? Color.clear : ink.opacity(0.06)))
-                )
+            Circle().fill(
+                isActive
+                    ? currentDesktopColor.opacity(0.24)
+                    : ink.opacity(isHovered ? 0.18 : 0)
+            )
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(
-                    isActive
-                        ? currentDesktopColor.opacity(0.90)
-                        : (isHoveringFlowButton ? ink.opacity(0.48) : (isPlain ? Color.clear : ink.opacity(0.24))),
-                    lineWidth: isActive ? 1.25 : 0.85
-                )
+            Circle().strokeBorder(
+                isActive
+                    ? currentDesktopColor.opacity(0.95)
+                    : ink.opacity(isHovered ? 0.85 : (isPlain ? 0 : 0.4)),
+                lineWidth: 1
+            )
         }
-        .scaleEffect(isHoveringFlowButton ? 1.04 : 1.0)
-        .animation(.easeOut(duration: 0.12), value: isHoveringFlowButton)
+        .padding(.horizontal, 2)
         .contentShape(Rectangle())
         .onHover { inside in
             isHoveringFlowButton = inside
@@ -387,37 +384,30 @@ private struct WindowFlowBarIcon: View {
         Canvas { ctx, size in
             let w = size.width
             let h = size.height
-            let baseAlpha: Double = isHighlighted ? 0.96 : 0.72
-            let wingAlpha: Double = isHighlighted ? 0.68 : 0.42
+            let centerAlpha: Double = isHighlighted ? 1.0 : 0.72
+            let sideAlpha: Double = isHighlighted ? 0.78 : 0.48
 
-            // Left perspective wing card (mirrors Window Flow's 3D amphitheatre strip)
-            var leftWing = Path()
-            leftWing.move(to: CGPoint(x: w * 0.06, y: h * 0.19))
-            leftWing.addLine(to: CGPoint(x: w * 0.22, y: h * 0.25))
-            leftWing.addLine(to: CGPoint(x: w * 0.22, y: h * 0.75))
-            leftWing.addLine(to: CGPoint(x: w * 0.06, y: h * 0.81))
-            leftWing.closeSubpath()
-            ctx.fill(leftWing, with: .color(color.opacity(wingAlpha)))
-
-            // Right perspective wing card
-            var rightWing = Path()
-            rightWing.move(to: CGPoint(x: w * 0.94, y: h * 0.19))
-            rightWing.addLine(to: CGPoint(x: w * 0.78, y: h * 0.25))
-            rightWing.addLine(to: CGPoint(x: w * 0.78, y: h * 0.75))
-            rightWing.addLine(to: CGPoint(x: w * 0.94, y: h * 0.81))
-            rightWing.closeSubpath()
-            ctx.fill(rightWing, with: .color(color.opacity(wingAlpha)))
+            // Left and right wing strokes (compact Flow silhouette matching the circular "+" button)
+            var sides = Path()
+            sides.move(to: CGPoint(x: w * 0.10, y: h * 0.25))
+            sides.addLine(to: CGPoint(x: w * 0.10, y: h * 0.75))
+            sides.move(to: CGPoint(x: w * 0.90, y: h * 0.25))
+            sides.addLine(to: CGPoint(x: w * 0.90, y: h * 0.75))
+            ctx.stroke(
+                sides,
+                with: .color(color.opacity(sideAlpha)),
+                style: StrokeStyle(lineWidth: 1.15, lineCap: .round)
+            )
 
             // Center hero card
             let centerRect = CGRect(
                 x: w * 0.28,
-                y: h * 0.13,
+                y: h * 0.14,
                 width: w * 0.44,
-                height: h * 0.74
+                height: h * 0.72
             )
-            let centerPath = Path(roundedRect: centerRect, cornerRadius: max(1.6, h * 0.12))
-            ctx.fill(centerPath, with: .color(color.opacity(isHighlighted ? 0.30 : 0.16)))
-            ctx.stroke(centerPath, with: .color(color.opacity(baseAlpha)), lineWidth: 1.25)
+            let centerPath = Path(roundedRect: centerRect, cornerRadius: max(1.1, h * 0.12))
+            ctx.stroke(centerPath, with: .color(color.opacity(centerAlpha)), lineWidth: 1.2)
         }
         .accessibilityHidden(true)
     }
