@@ -10,6 +10,8 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+## [6.3] - 2026-11-27
+
 ### Fixed
 - Changing `windowGap` or `screenEdgeGap` now updates visible snapped windows in Drag to Snap
   right away (`DragSnapService.reapplyGaps`, recording each snapped window's `relativeFrame` until
