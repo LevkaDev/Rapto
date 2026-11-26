@@ -11,6 +11,10 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- Changing `windowGap` or `screenEdgeGap` now updates visible snapped windows in Drag to Snap
+  right away (`DragSnapService.reapplyGaps`, recording each snapped window's `relativeFrame` until
+  manually resized) and reapplies gaps across every connected display instead of only the active
+  screen's mode (`AppState.reapplyLayoutWithNewGaps`).
 - Removed the duplicate `2+1+2` built-in layout (`PredefinedTemplates.twoOneTow`), which had
   identical zones and fill order to `Center + Split Sides`. Saved preferences, screen/space
   configurations, saved layouts, workspaces, layout shortcuts, and AppleScript calls targeting its
