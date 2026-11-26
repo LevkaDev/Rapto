@@ -118,13 +118,13 @@ class SnapBackService: ObservableObject {
     }
     
     /// Reapply the current layout (e.g., when gap settings change) - all active screens
-    func reapplyLayout() {
+    func reapplyLayout(excludingScreenIDs: Set<String> = []) {
         guard let layoutManager = layoutManager else {
             logger.debug("No layoutManager")
             return
         }
         
-        let activeScreenIDs = layoutManager.screensWithActiveLayouts
+        let activeScreenIDs = layoutManager.screensWithActiveLayouts.filter { !excludingScreenIDs.contains($0) }
         guard !activeScreenIDs.isEmpty else {
             logger.debug("No active layouts to reapply")
             return

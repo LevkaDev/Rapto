@@ -11,6 +11,10 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- Changing `windowGap` or `screenEdgeGap` now updates visible snapped windows in Drag to Snap
+  right away (`DragSnapService.reapplyGaps`, recording each snapped window's `relativeFrame` until
+  manually resized) and reapplies gaps across every connected display instead of only the active
+  screen's mode (`AppState.reapplyLayoutWithNewGaps`).
 - Switching back to an Auto-tiling desktop while an App-Napped Mac Catalyst app (such as Apple Maps)
   was waking up could cause Auto-tiling to drop that window as temporarily unresponsive, collapse
   the grid from 3 slots to 2, and treat the window as new once it answered — swapping it into the

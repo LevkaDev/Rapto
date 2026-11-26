@@ -612,31 +612,62 @@ extension AppState {
         reapplyLayoutWithNewGaps()
     }
     
-    private func reapplyLayoutWithNewGaps() {
-        switch currentMode {
-        case .none:
-            break
-            
-        case .manualAssignment:
-            if let snapBackService = snapBackService {
-                if snapBackService.hasActiveLayout {
-                    logger.info("Reapplying manual layout with new gaps (snapBack=\(self.snapBackEnabled))")
-                    snapBackService.reapplyLayout()
-                } else {
-                    logger.debug("No active layout to reapply in manual mode")
-                }
+    nonisolated struct GapReapplyPlan: Equatable {
+        let manualScreens: [String]
+        let autoTilingScreens: [String]
+        let dragSnapScreens: [String]
+    }
+
+    nonisolated static func gapReapplyPlan(screenModes: [(screenID: String, mode: TilingMode)]) -> GapReapplyPlan {
+        var manual: [String] = []
+        var autoTiling: [String] = []
+        var dragSnap: [String] = []
+        for (screenID, mode) in screenModes {
+            switch mode {
+            case .none:
+                break
+            case .manualAssignment:
+                manual.append(screenID)
+            case .autoTiling:
+                autoTiling.append(screenID)
+            case .dragSnap:
+                dragSnap.append(screenID)
             }
-            
-        case .autoTiling:
-            if let autoTilingService = autoTilingService {
-                logger.info("Redistributing auto-tiling layout with new gaps")
-                autoTilingService.redistributeNow()
-            }
-            
-        case .dragSnap:
-            // Drag-snap doesn't maintain a layout, so no reapply needed
-            break
         }
+        return GapReapplyPlan(manualScreens: manual, autoTilingScreens: autoTiling, dragSnapScreens: dragSnap)
+    }
+
+    private func reapplyLayoutWithNewGaps() {
+        let screenModes = screenManager.allScreens().map { screen in
+            (screenID: screenManager.identifier(for: screen), mode: mode(for: screen))
+        }
+        let plan = Self.gapReapplyPlan(screenModes: screenModes)
+
+        if !plan.manualScreens.isEmpty, let snapBackService = snapBackService {
+            if snapBackService.hasActiveLayout {
+                logger.info("Reapplying manual layout with new gaps (snapBack=\(self.snapBackEnabled))")
+                snapBackService.reapplyLayout(excludingScreenIDs: Set(plan.autoTilingScreens))
+            } else {
+                logger.debug("No active layout to reapply in manual mode")
+            }
+        }
+
+        if !plan.autoTilingScreens.isEmpty, let autoTilingService = autoTilingService {
+            logger.info("Redistributing auto-tiling layout with new gaps")
+            for screenID in plan.autoTilingScreens {
+                autoTilingService.redistributeNow(forScreenID: screenID)
+            }
+        }
+
+        if !plan.dragSnapScreens.isEmpty, let dragSnapService = dragSnapService {
+            logger.info("Reapplying drag-snap windows with new gaps")
+            for screenID in plan.dragSnapScreens {
+                dragSnapService.reapplyGaps(forScreenID: screenID)
+            }
+        }
+
+        windowHighlightService?.refresh()
+        groupIndicatorManager?.updateIndicators()
     }
 
     // MARK: - Custom Grid Creation Methods
