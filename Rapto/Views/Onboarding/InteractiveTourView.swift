@@ -155,7 +155,7 @@ struct InteractiveTourView: View {
         .frame(width: 400)
         .background {
             ZStack {
-                VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+                WindowFlowMaskedBlurView(cornerRadius: 16)
                 shape.fill(WindowFlowThemeTokens.glassFill)
             }
         }
@@ -163,7 +163,6 @@ struct InteractiveTourView: View {
         .overlay {
             shape.strokeBorder(WindowFlowThemeTokens.rimGradient, lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.44), radius: 20, y: 8)
         .environment(\.colorScheme, .dark)
         .onAppear {
             refreshWindowCount()

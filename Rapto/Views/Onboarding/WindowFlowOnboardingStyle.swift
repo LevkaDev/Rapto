@@ -250,6 +250,44 @@ extension View {
     }
 }
 
+// MARK: - Masked Behind-Window Vibrancy (No Rectangular Corner Ears on Borderless Panels)
+
+struct WindowFlowMaskedBlurView: NSViewRepresentable {
+    let cornerRadius: CGFloat
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .vibrantDark)
+        view.maskImage = Self.roundedMaskImage(cornerRadius: cornerRadius)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.maskImage = Self.roundedMaskImage(cornerRadius: cornerRadius)
+    }
+
+    private static func roundedMaskImage(cornerRadius: CGFloat) -> NSImage {
+        let edge = cornerRadius * 2 + 2
+        let size = NSSize(width: edge, height: edge)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(
+            top: cornerRadius,
+            left: cornerRadius,
+            bottom: cornerRadius,
+            right: cornerRadius
+        )
+        image.resizingMode = .stretch
+        return image
+    }
+}
+
 // MARK: - Window Flow Button Styles
 
 struct WindowFlowPrimaryButtonStyle: ButtonStyle {

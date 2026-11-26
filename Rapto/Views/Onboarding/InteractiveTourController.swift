@@ -70,6 +70,7 @@ final class InteractiveTourController {
             y: round(visible.minY + 26)
         )
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.invalidateShadow()
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
@@ -97,6 +98,7 @@ final class InteractiveTourController {
             )
             if abs(updated.height - current.height) > 0.5 || abs(updated.width - current.width) > 0.5 {
                 panel.setFrame(updated, display: true, animate: false)
+                panel.invalidateShadow()
             }
         }
     }
