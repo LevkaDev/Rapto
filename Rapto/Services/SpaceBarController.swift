@@ -229,6 +229,8 @@ final class SpaceBarController: ObservableObject {
     private var segmentFrames: [String: [UInt64: CGRect]] = [:]
     /// Frames of each app icon in its pill, for finding a right-clicked app glyph.
     private var glyphFrames: [String: [SpaceBarGlyphKey: CGRect]] = [:]
+    /// Proven title-bar grab anchors remembered per app for the current session.
+    private var grabMemory = DesktopMoveGrabMemory()
 
     /// Builds the right-click menu for a desktop (and optional clicked app glyph) on a display.
     var menuBuilder: ((SpaceBarSpace, SpaceBarGlyph?, String) -> NSMenu?)?
@@ -921,51 +923,86 @@ final class SpaceBarController: ObservableObject {
     /// The title bar spot belongs to the window only once it is in front, so retry briefly.
     private func grabWhenRaised(
         _ window: SpaceBarWindowRef, axWindow: AXUIElement, frame: CGRect,
-        to targetID: UInt64, displayID: String, home: UInt64?, targetKey: String?, deadline: Date
+        to targetID: UInt64, displayID: String, home: UInt64?, targetKey: String?,
+        deadline: Date, didRetrySlowAX: Bool = false
     ) {
-        // Until the window is in front, the spots are answered by the window still covering it
-        // (Yab raised behind Orca: the spots next to its buttons were taken for Orca's and skipped)
-        let top = CGPoint(x: frame.midX, y: frame.minY + 10)
-        if Date() < deadline, !SpaceBarController.windowIsOnTop(pid: window.pid, at: top, among: SpaceBarController.windowsFrontToBack()) {
+        let liveFrame = self.frame(of: axWindow) ?? frame
+        let windows = SpaceBarController.windowsFrontToBack()
+        // Until the window is in front, spots are answered by whatever covers it. Checking three
+        // points along the top strip avoids stalling when a small floating window sits over midX.
+        let raisePoints = DesktopMoveGrabPlanner.raiseCheckPoints(for: liveFrame)
+        let isOnTop = !raisePoints.isEmpty && raisePoints.contains {
+            SpaceBarController.windowIsOnTop(pid: window.pid, at: $0, among: windows)
+        }
+        if Date() < deadline, !isOnTop {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
-                self?.grabWhenRaised(window, axWindow: axWindow, frame: frame, to: targetID,
-                                     displayID: displayID, home: home, targetKey: targetKey, deadline: deadline)
+                self?.grabWhenRaised(window, axWindow: axWindow, frame: liveFrame, to: targetID,
+                                     displayID: displayID, home: home, targetKey: targetKey,
+                                     deadline: deadline, didRetrySlowAX: didRetrySlowAX)
             }
             return
         }
-        guard let plan = grabPlan(in: axWindow, frame: frame, pid: window.pid) else {
+        let appKey = appIdentityKey(for: window)
+        let button = titleBarButtonFrame(of: axWindow)
+        switch primaryGrabPlan(
+            in: axWindow, frame: liveFrame, button: button, pid: window.pid,
+            appKey: appKey, windows: windows, didRetrySlowAX: didRetrySlowAX
+        ) {
+        case .retrySlowAX:
+            // MARK: - Workaround: Zen describes its page only a while after it is first asked
+            // Retry once asynchronously so we never block the main thread with Thread.sleep.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.grabWhenRaised(window, axWindow: axWindow, frame: liveFrame, to: targetID,
+                                     displayID: displayID, home: home, targetKey: targetKey,
+                                     deadline: max(deadline, Date().addingTimeInterval(0.2)),
+                                     didRetrySlowAX: true)
+            }
+            return
+        case .none:
             if Date() < deadline {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
-                    self?.grabWhenRaised(window, axWindow: axWindow, frame: frame, to: targetID,
-                                         displayID: displayID, home: home, targetKey: targetKey, deadline: deadline)
+                    self?.grabWhenRaised(window, axWindow: axWindow, frame: liveFrame, to: targetID,
+                                         displayID: displayID, home: home, targetKey: targetKey,
+                                         deadline: deadline, didRetrySlowAX: didRetrySlowAX)
                 }
                 return
             }
-            logger.notice("Move: no free title bar spot in \(window.ownerName, privacy: .public), frame \(String(describing: frame), privacy: .public)")
+            logger.notice("Move: no free title bar spot in \(window.ownerName, privacy: .public), frame \(String(describing: liveFrame), privacy: .public)")
             isMovingWindow = false
             Self.isDrivingMouse = false
             Self.movingWindowID = nil
             NSSound.beep()
             return
+        case .ready(let plan):
+            let source = CGEventSource(stateID: .hidSystemState)
+            let screenBounds = screen(forDisplayID: displayID).map { axRect(of: $0.frame) }
+            let grab = Grab(
+                window: window, appKey: appKey, axWindow: axWindow, frame: liveFrame,
+                buttonFrame: button, screenBounds: screenBounds, targetID: targetID,
+                targetKey: targetKey, displayID: displayID, home: home,
+                cursor: CGEvent(source: nil)?.location ?? plan.points[0], source: source,
+                usedCache: plan.usedCache, canDiscoverFallbacks: !plan.isGuess
+            )
+            if plan.isGuess {
+                probe(plan.points, at: 0, grab: grab)
+            } else {
+                pressAndCarry(from: plan.points[0], grab: grab)
+            }
         }
-        let source = CGEventSource(stateID: .hidSystemState)
-        let grab = Grab(
-            window: window, axWindow: axWindow, frame: frame, targetID: targetID, targetKey: targetKey,
-            displayID: displayID, home: home, cursor: CGEvent(source: nil)?.location ?? plan.points[0], source: source,
-            fallbacks: plan.fallbacks
-        )
-        if plan.isGuess {
-            probe(plan.points, at: 0, grab: grab)
-        } else {
-            pressAndCarry(from: plan.points[0], grab: grab)
-        }
+    }
+
+    private func appIdentityKey(for window: SpaceBarWindowRef) -> String {
+        AppBundleLookup.bundleIdentifier(for: NSRunningApplication(processIdentifier: window.pid)) ?? window.ownerName
     }
 
     /// What a move needs from the moment the mouse goes down until the desktop switches.
     private struct Grab {
         let window: SpaceBarWindowRef
+        let appKey: String
         let axWindow: AXUIElement
         let frame: CGRect
+        let buttonFrame: CGRect?
+        let screenBounds: CGRect?
         let targetID: UInt64
         let targetKey: String?
         let displayID: String
@@ -973,121 +1010,204 @@ final class SpaceBarController: ObservableObject {
         /// Where the pointer was before the move, to put it back
         let cursor: CGPoint
         let source: CGEventSource?
-        /// Other spots to probe when the confirmed one does not drag the window
-        var fallbacks: [CGPoint] = []
+        /// Whether the initial spot came from per-app session memory
+        var usedCache: Bool = false
+        /// Whether a non-moving primary/cached spot may lazily discover and probe fallback spots
+        var canDiscoverFallbacks: Bool = false
         /// The confirmed spot the fallbacks stand in for; used when none of them drags either
         var lastResort: CGPoint?
+        /// Whether the window visibly followed the synthetic drag before switching desktops
+        var confirmedDrag: Bool = false
     }
 
-    /// How far a guessed spot is dragged to see whether the window follows: first a little, then
-    /// more for title bar parts that are also buttons and wait for a longer drag.
-    private static let probeOffsets: [CGPoint] = [CGPoint(x: 5, y: 5), CGPoint(x: 12, y: 12)]
+    private struct OriginSnapshot {
+        let ax: CGPoint?
+        let cg: CGPoint?
+    }
+
+    private func originSnapshot(for grab: Grab) -> OriginSnapshot {
+        OriginSnapshot(
+            ax: frame(of: grab.axWindow)?.origin,
+            cg: cgWindowOrigin(windowID: grab.window.windowID)
+        )
+    }
+
+    /// Direct WindowServer bounds lookup catches apps whose AX position lags or stays stale mid-drag.
+    private func cgWindowOrigin(windowID: CGWindowID) -> CGPoint? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
+              let info = list.first,
+              let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
+              let x = bounds["X"], let y = bounds["Y"] else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// How far a spot is dragged to verify the window follows: first a small nudge for native
+    /// windows, then a wider drag for Catalyst/Electron/Qt windows with an 8–12 pt drag threshold.
+    private static let probeOffsets: [CGFloat] = [5, 14]
 
     private func press(at point: CGPoint, grab: Grab) {
-        logger.notice("Move: grabbing at \(String(describing: point), privacy: .public)")
+        logger.notice("Move: grabbing at \(String(describing: point), privacy: .public)\(grab.usedCache ? " (cached)" : "", privacy: .public)")
         postMouse(.mouseMoved, at: point, source: grab.source)
         postMouse(.leftMouseDown, at: point, source: grab.source)
     }
 
-    // MARK: - Workaround: A window that starts following the mouse late is left behind
+    // MARK: - Workaround: A window that starts following the mouse late or needs a longer drag
     // Cause: macOS carries a window to the next desktop only once its drag has begun. Some
-    //        apps (Hark) begin it a few hundred milliseconds after the press, and the desktop
-    //        switched before that about one time in four.
-    // Context: After the press the window is dragged a few points and the switch waits until
-    //          it has moved, or for `followWait` at most; a window that never reports a move
-    //          is carried anyway, as it was before.
+    //        apps (Hark) begin a few hundred milliseconds after the press, while Catalyst and
+    //        Electron apps (WhatsApp) ignore a 5 pt drag until the pointer moves ~10–14 pt.
+    // Context: After the press we drag 5 pt, escalate to 14 pt if the window has not moved
+    //          within `escalateWait`, and wait up to `followWaitWithFallbacks` (or `followWait`
+    //          on last resort) checking both Core Graphics and Accessibility positions.
+    private static let escalateWait: TimeInterval = 0.12
+    private static let followWaitWithFallbacks: TimeInterval = 0.36
     private static let followWait: TimeInterval = 0.45
     private static let followPoll: TimeInterval = 0.03
 
     private func pressAndCarry(from point: CGPoint, grab: Grab) {
-        let before = frame(of: grab.axWindow)?.origin ?? grab.frame.origin
+        let before = originSnapshot(for: grab)
         press(at: point, grab: grab)
-        let offset = Self.probeOffsets[0]
-        postMouse(.leftMouseDragged, at: CGPoint(x: point.x + offset.x, y: point.y + offset.y), source: grab.source)
-        waitForFollow(from: point, grab: grab, before: before, started: Date())
+        let target = DesktopMoveGrabPlanner.probeDragTarget(from: point, windowFrame: grab.frame, offset: Self.probeOffsets[0])
+        postMouse(.leftMouseDragged, at: target, source: grab.source)
+        waitForFollow(from: point, grab: grab, before: before, started: Date(), stage: 0)
     }
 
-    private func waitForFollow(from point: CGPoint, grab: Grab, before: CGPoint, started: Date) {
+    private func waitForFollow(from point: CGPoint, grab: Grab, before: OriginSnapshot, started: Date, stage: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.followPoll) { [weak self] in
             guard let self else { return }
             let waited = Date().timeIntervalSince(started)
-            let now = self.frame(of: grab.axWindow)?.origin
-            let followed = now.map { SpaceBarController.windowFollowed(from: before, to: $0, dragOffset: Self.probeOffsets[0].x) } ?? false
-            if followed || waited >= Self.followWait {
-                logger.notice("Move: \(followed ? "window follows" : "no move seen", privacy: .public) after \(String(format: "%.2f", waited), privacy: .public)s")
-                if !followed, !grab.fallbacks.isEmpty {
-                    self.tryFallbacks(after: point, grab: grab)
+            let now = self.originSnapshot(for: grab)
+            let followed = DesktopMoveGrabPlanner.didWindowFollow(
+                beforeAX: before.ax, nowAX: now.ax,
+                beforeCG: before.cg, nowCG: now.cg,
+                dragOffset: Self.probeOffsets[stage]
+            )
+            if followed {
+                logger.notice("Move: window follows after \(String(format: "%.2f", waited), privacy: .public)s (stage \(stage))")
+                self.grabMemory.remember(point: point, in: grab.frame, buttonFrame: grab.buttonFrame, for: grab.appKey)
+                var confirmed = grab
+                confirmed.confirmedDrag = true
+                self.carry(from: point, grab: confirmed)
+                return
+            }
+            if stage == 0, waited >= Self.escalateWait, Self.probeOffsets.count > 1 {
+                let target = DesktopMoveGrabPlanner.probeDragTarget(from: point, windowFrame: grab.frame, offset: Self.probeOffsets[1])
+                self.postMouse(.leftMouseDragged, at: target, source: grab.source)
+                self.waitForFollow(from: point, grab: grab, before: before, started: started, stage: 1)
+                return
+            }
+            let maxWait = grab.canDiscoverFallbacks ? Self.followWaitWithFallbacks : Self.followWait
+            if waited >= maxWait {
+                logger.notice("Move: no move seen after \(String(format: "%.2f", waited), privacy: .public)s")
+                if grab.canDiscoverFallbacks {
+                    self.tryFallbacks(after: point, before: before, grab: grab)
                     return
                 }
                 self.carry(from: point, grab: grab)
                 return
             }
-            self.waitForFollow(from: point, grab: grab, before: before, started: started)
+            self.waitForFollow(from: point, grab: grab, before: before, started: started, stage: stage)
         }
     }
 
-    // MARK: - Workaround: A spot Accessibility calls title bar does not always drag the window
-    // Cause: In Yab the middle of the top strip answers as a plain group of the window, like
-    //        empty toolbar space does, but it is the tab strip: a press there drags nothing,
-    //        and the desktop switched without the window.
-    // Context: When a confirmed spot does not move the window within `followWait`, it is let go
-    //          outside the window and a few other spots are probed. If none drags either, the
-    //          move goes on from the confirmed spot as before, for windows that never report
-    //          that they moved.
-    private func tryFallbacks(after point: CGPoint, grab: Grab) {
-        logger.notice("Move: letting go of \(String(describing: point), privacy: .public), probing \(grab.fallbacks.count) other spots")
-        let outside = SpaceBarController.releasePoint(for: point, windowFrame: grab.frame)
+    // MARK: - Workaround: A spot Accessibility calls title bar (or a cached spot) may stop dragging
+    // Cause: In Yab the middle of the top strip answers as a plain group of the window, or newly
+    //        opened tabs can cover a previously learned spot.
+    // Context: Release safely outside the window. If releasing itself moved the window (late
+    //          follower like Hark), re-grab that same winning spot. Otherwise invalidate any stale
+    //          cache entry and lazily probe structural empty gaps and multi-row candidates.
+    private func tryFallbacks(after point: CGPoint, before: OriginSnapshot, grab: Grab) {
+        let outside = DesktopMoveGrabPlanner.releasePoint(for: point, windowFrame: grab.frame, screenBounds: grab.screenBounds)
         postMouse(.leftMouseDragged, at: outside, source: grab.source)
         postMouse(.leftMouseUp, at: outside, source: grab.source)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self else { return }
+            let after = self.originSnapshot(for: grab)
+            let followedLate = DesktopMoveGrabPlanner.didWindowFollow(
+                beforeAX: before.ax, nowAX: after.ax,
+                beforeCG: before.cg, nowCG: after.cg,
+                dragOffset: Self.probeOffsets[0]
+            )
             self.putBack(grab)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+                guard let self else { return }
+                if followedLate {
+                    logger.notice("Move: window followed late at \(String(describing: point), privacy: .public)")
+                    self.grabMemory.remember(point: point, in: grab.frame, buttonFrame: grab.buttonFrame, for: grab.appKey)
+                    var next = grab
+                    next.canDiscoverFallbacks = false
+                    next.confirmedDrag = true
+                    self.pressAndCarry(from: point, grab: next)
+                    return
+                }
+                if grab.usedCache {
+                    logger.notice("Move: invalidating cached grab spot for \(grab.appKey, privacy: .public)")
+                    self.grabMemory.invalidate(for: grab.appKey)
+                }
+                let candidates = self.fallbackSpots(
+                    after: point, in: grab.axWindow, frame: grab.frame,
+                    button: grab.buttonFrame, pid: grab.window.pid
+                )
                 var next = grab
-                next.fallbacks = []
+                next.usedCache = false
+                next.canDiscoverFallbacks = false
                 next.lastResort = point
-                self?.probe(grab.fallbacks, at: 0, grab: next)
+                if candidates.isEmpty {
+                    logger.notice("Move: no fallback spots available, carrying from \(String(describing: point), privacy: .public)")
+                    self.pressAndCarry(from: point, grab: next)
+                } else {
+                    logger.notice("Move: letting go of \(String(describing: point), privacy: .public), probing \(candidates.count) other spots")
+                    self.probe(candidates, at: 0, grab: next)
+                }
             }
         }
     }
 
     // MARK: - Workaround: Some title bars drawn as a web page say nothing about where they drag
-    // Cause: Antigravity and apps alike answer "web page" or "group" at every point of the title
+    // Cause: Antigravity, Orca and Electron apps answer "web page" or "group" across the title
     //        bar, and only parts of it drag the window. The rest holds controls.
-    // Context: Guessed spots are tried one by one: press, drag a few points, and see whether the
-    //          window moved from where it was just before. One that did not is let go outside
-    //          the window, so nothing under it is clicked. A window that moved only on that way
-    //          out follows late (Hark): the spot does drag it, so the move goes on from there.
+    // Context: Guessed spots are tried one by one: press, drag inward, and see whether the
+    //          window moved according to Core Graphics or Accessibility. One that did not is let
+    //          go outside the window, so nothing under it is clicked. A window that moved only on
+    //          that way out follows late (Hark): the spot does drag it, so we re-grab it.
     private func probe(_ points: [CGPoint], at index: Int, grab: Grab) {
         guard index < points.count else {
             // None followed within the wait. Moving from the first spot is what worked before
             // spots were probed, for windows that are only slow to follow.
             logger.notice("Move: no guessed spot dragged the window, using the first")
-            pressAndCarry(from: grab.lastResort ?? points[0], grab: grab)
+            var last = grab
+            last.canDiscoverFallbacks = false
+            pressAndCarry(from: grab.lastResort ?? points[0], grab: last)
             return
         }
         let point = points[index]
-        let before = frame(of: grab.axWindow)?.origin ?? grab.frame.origin
+        let before = originSnapshot(for: grab)
         press(at: point, grab: grab)
         dragProbe(points, at: index, grab: grab, before: before, stage: 0)
     }
 
-    private func dragProbe(_ points: [CGPoint], at index: Int, grab: Grab, before: CGPoint, stage: Int) {
+    private func dragProbe(_ points: [CGPoint], at index: Int, grab: Grab, before: OriginSnapshot, stage: Int) {
         let point = points[index]
-        let offset = Self.probeOffsets[stage]
-        postMouse(.leftMouseDragged, at: CGPoint(x: point.x + offset.x, y: point.y + offset.y), source: grab.source)
+        let target = DesktopMoveGrabPlanner.probeDragTarget(from: point, windowFrame: grab.frame, offset: Self.probeOffsets[stage])
+        postMouse(.leftMouseDragged, at: target, source: grab.source)
         checkProbe(points, at: index, grab: grab, before: before, stage: stage, attempt: 0)
     }
 
-    private func checkProbe(_ points: [CGPoint], at index: Int, grab: Grab, before: CGPoint, stage: Int, attempt: Int) {
+    private func checkProbe(_ points: [CGPoint], at index: Int, grab: Grab, before: OriginSnapshot, stage: Int, attempt: Int) {
         // The app needs a moment to move its window after the drag event
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
             guard let self else { return }
             let point = points[index]
-            let now = self.frame(of: grab.axWindow)
-            if let now, SpaceBarController.windowFollowed(from: before, to: now.origin, dragOffset: Self.probeOffsets[stage].x) {
-                logger.notice("Move: window followed at \(String(describing: point), privacy: .public), from \(String(describing: before), privacy: .public) to \(String(describing: now.origin), privacy: .public)")
-                self.carry(from: point, grab: grab)
+            let now = self.originSnapshot(for: grab)
+            if DesktopMoveGrabPlanner.didWindowFollow(
+                beforeAX: before.ax, nowAX: now.ax,
+                beforeCG: before.cg, nowCG: now.cg,
+                dragOffset: Self.probeOffsets[stage]
+            ) {
+                logger.notice("Move: window followed at \(String(describing: point), privacy: .public), stage \(stage)")
+                self.grabMemory.remember(point: point, in: grab.frame, buttonFrame: grab.buttonFrame, for: grab.appKey)
+                var confirmed = grab
+                confirmed.confirmedDrag = true
+                self.carry(from: point, grab: confirmed)
                 return
             }
             if attempt < 1 {
@@ -1100,19 +1220,27 @@ final class SpaceBarController: ObservableObject {
             }
             logger.notice("Move: window did not follow at \(String(describing: point), privacy: .public)")
             // A button is pressed only when the mouse goes up over it
-            let outside = SpaceBarController.releasePoint(for: point, windowFrame: grab.frame)
+            let outside = DesktopMoveGrabPlanner.releasePoint(for: point, windowFrame: grab.frame, screenBounds: grab.screenBounds)
             self.postMouse(.leftMouseDragged, at: outside, source: grab.source)
             self.postMouse(.leftMouseUp, at: outside, source: grab.source)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 guard let self else { return }
-                let after = self.frame(of: grab.axWindow)?.origin
-                let followedLate = after.map { SpaceBarController.windowFollowed(from: before, to: $0, dragOffset: Self.probeOffsets[0].x) } ?? false
+                let after = self.originSnapshot(for: grab)
+                let followedLate = DesktopMoveGrabPlanner.didWindowFollow(
+                    beforeAX: before.ax, nowAX: after.ax,
+                    beforeCG: before.cg, nowCG: after.cg,
+                    dragOffset: Self.probeOffsets[0]
+                )
                 self.putBack(grab)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
                     guard let self else { return }
                     if followedLate {
                         logger.notice("Move: window followed late at \(String(describing: point), privacy: .public)")
-                        self.pressAndCarry(from: point, grab: grab)
+                        self.grabMemory.remember(point: point, in: grab.frame, buttonFrame: grab.buttonFrame, for: grab.appKey)
+                        var confirmed = grab
+                        confirmed.canDiscoverFallbacks = false
+                        confirmed.confirmedDrag = true
+                        self.pressAndCarry(from: point, grab: confirmed)
                     } else {
                         self.probe(points, at: index + 1, grab: grab)
                     }
@@ -1124,19 +1252,13 @@ final class SpaceBarController: ObservableObject {
     /// Where to let go of a spot that did not drag the window: just outside the window, so no
     /// control is pressed, but not at a screen edge, where macOS would tile a window that did follow.
     nonisolated static func releasePoint(for point: CGPoint, windowFrame: CGRect) -> CGPoint {
-        let edgeMargin: CGFloat = 8
-        if windowFrame.minY - 4 >= edgeMargin {
-            return CGPoint(x: point.x, y: windowFrame.minY - 4)
-        }
-        if windowFrame.minX - 4 >= edgeMargin {
-            return CGPoint(x: windowFrame.minX - 4, y: point.y)
-        }
-        return point
+        DesktopMoveGrabPlanner.releasePoint(for: point, windowFrame: windowFrame, screenBounds: nil)
     }
 
     /// Returns the window to where it was when the move began, if a probe shifted it.
     private func putBack(_ grab: Grab) {
-        guard let now = frame(of: grab.axWindow)?.origin, now != grab.frame.origin else { return }
+        let now = cgWindowOrigin(windowID: grab.window.windowID) ?? frame(of: grab.axWindow)?.origin
+        guard let now, now != grab.frame.origin else { return }
         logger.notice("Move: putting the window back from \(String(describing: now), privacy: .public) to \(String(describing: grab.frame.origin), privacy: .public)")
         var origin = grab.frame.origin
         guard let value = AXValueCreate(.cgPoint, &origin) else { return }
@@ -1146,16 +1268,19 @@ final class SpaceBarController: ObservableObject {
     /// Whether a window dragged by `dragOffset` points came along. `start` is where it was just
     /// before the press, not when the move began: an earlier spot may have shifted it.
     nonisolated static func windowFollowed(from start: CGPoint, to now: CGPoint, dragOffset: CGFloat) -> Bool {
-        let moved = max(abs(now.x - start.x), abs(now.y - start.y))
-        return moved >= dragOffset / 2
+        DesktopMoveGrabPlanner.didWindowFollow(
+            beforeAX: start, nowAX: now, beforeCG: nil, nowCG: nil, dragOffset: dragOffset
+        )
     }
 
     /// The mouse is down on `point` and the window follows it: switch the desktop under it.
     private func carry(from point: CGPoint, grab: Grab) {
         var move = WindowMove(
-            window: grab.window, axWindow: grab.axWindow, origin: grab.frame.origin, targetID: grab.targetID, targetKey: grab.targetKey, displayID: grab.displayID,
+            window: grab.window, appKey: grab.appKey, axWindow: grab.axWindow,
+            origin: grab.frame.origin, frame: grab.frame, buttonFrame: grab.buttonFrame,
+            targetID: grab.targetID, targetKey: grab.targetKey, displayID: grab.displayID,
             home: grab.home, grab: point, cursor: grab.cursor, source: grab.source,
-            phaseStarted: Date()
+            phaseStarted: Date(), confirmedDrag: grab.confirmedDrag
         )
         postMouse(.leftMouseDragged, at: CGPoint(x: point.x + 1, y: point.y), source: grab.source)
         postMouse(.leftMouseDragged, at: point, source: grab.source)
@@ -1172,9 +1297,12 @@ final class SpaceBarController: ObservableObject {
 
     private struct WindowMove {
         let window: SpaceBarWindowRef
+        let appKey: String
         let axWindow: AXUIElement
         /// Where the window was before it was grabbed
         let origin: CGPoint
+        let frame: CGRect
+        let buttonFrame: CGRect?
         let targetID: UInt64
         let targetKey: String?
         let displayID: String
@@ -1185,6 +1313,7 @@ final class SpaceBarController: ObservableObject {
         var phaseStarted: Date
         var restoreHotKey: (() -> Void)?
         var arrivedAt: Date?
+        var confirmedDrag: Bool = false
     }
 
     private func switchByHotKey(_ move: inout WindowMove) {
@@ -1301,6 +1430,7 @@ final class SpaceBarController: ObservableObject {
             let done = moved && self.window(window.windowID, isOn: move.targetID)
             logger.notice("Move \(window.ownerName, privacy: .public) window \(window.windowID) to desktop \(move.targetID): \(done ? "done" : "failed", privacy: .public)")
             if done {
+                self.grabMemory.remember(point: move.grab, in: move.frame, buttonFrame: move.buttonFrame, for: move.appKey)
                 self.undoProbeShift(move)
                 if let targetKey = move.targetKey {
                     self.onDidMoveWindow?(window.windowID, targetKey, move.displayID)
@@ -1309,6 +1439,7 @@ final class SpaceBarController: ObservableObject {
                     self.performFocus(pid: window.pid, windowID: window.windowID)
                 }
             } else {
+                self.grabMemory.invalidate(for: move.appKey)
                 NSSound.beep()
             }
             self.refresh()
@@ -1331,7 +1462,7 @@ final class SpaceBarController: ObservableObject {
     nonisolated static func isProbeShift(from origin: CGPoint, to now: CGPoint) -> Bool {
         let dx = abs(now.x - origin.x)
         let dy = abs(now.y - origin.y)
-        return (dx > 0 || dy > 0) && dx <= 16 && dy <= 16
+        return (dx > 0 || dy > 0) && dx <= 18 && dy <= 18
     }
 
     private func postMouse(_ type: CGEventType, at point: CGPoint, source: CGEventSource?) {
@@ -1343,102 +1474,277 @@ final class SpaceBarController: ObservableObject {
         event.post(tap: .cghidEventTap)
     }
 
-    /// Where to press to drag the window. A spot Accessibility confirms is used as it is;
-    /// guessed spots are probed one by one.
+    /// Where to press to drag the window. A spot Accessibility confirms (or a cached anchor) is
+    /// tried immediately; guessed spots are probed one by one.
     private struct GrabPlan {
         let points: [CGPoint]
         let isGuess: Bool
-        /// For a confirmed spot: what to probe when it turns out not to drag the window
-        var fallbacks: [CGPoint] = []
+        var usedCache: Bool = false
     }
 
-    /// Spots in the title bar that drag the window, not a tab or a button.
-    private func grabPlan(in window: AXUIElement, frame: CGRect, pid: pid_t) -> GrabPlan? {
-        guard var plan = primaryGrabPlan(in: window, frame: frame, pid: pid) else { return nil }
-        if !plan.isGuess {
-            plan.fallbacks = fallbackSpots(after: plan.points[0], in: window, frame: frame, pid: pid)
-        }
-        return plan
+    private enum GrabPlanOutcome {
+        case ready(GrabPlan)
+        case retrySlowAX
+        case none
     }
 
-    /// How many other spots are probed after a confirmed one failed: each costs a quarter of a second
-    private static let fallbackLimit = 5
+    /// Maximum fallback spots probed lazily when a confirmed or cached spot does not drag.
+    private static let fallbackLimit = 8
+    /// Maximum spots probed when the window has no confirmed native chrome spot.
+    private static let probeLimit = 10
 
-    /// Spots that are no control and lie on the window, next to the window buttons first, then
-    /// along the title bar and along the top edge.
-    private func fallbackSpots(after failed: CGPoint, in window: AXUIElement, frame: CGRect, pid: pid_t) -> [CGPoint] {
-        var candidates: [CGPoint] = []
-        let button = buttonFrame(kAXZoomButtonAttribute, of: window)
+    private func titleBarButtonFrame(of window: AXUIElement) -> CGRect? {
+        buttonFrame(kAXZoomButtonAttribute, of: window)
             ?? buttonFrame(kAXFullScreenButtonAttribute, of: window)
             ?? buttonFrame(kAXCloseButtonAttribute, of: window)
-        if let button {
-            candidates += [10.0, 28.0, 56.0].map { CGPoint(x: button.maxX + $0, y: button.midY) }
-            candidates += SpaceBarController.guessedGrabXs(buttonsMaxX: button.maxX, frameMinX: frame.minX, frameMaxX: frame.maxX)
-                .map { CGPoint(x: $0, y: button.midY) }
+    }
+
+    /// Center of the window's native AXTitleUIElement when it sits inside the top title-bar strip.
+    private func titleElementCenter(in window: AXUIElement, frame: CGRect) -> CGPoint? {
+        guard let titleEl = elementAttribute(kAXTitleUIElementAttribute, of: window),
+              let titleFrame = self.frame(of: titleEl),
+              titleFrame.width >= 8, titleFrame.height >= 6,
+              titleFrame.minY >= frame.minY,
+              titleFrame.maxY <= frame.minY + DesktopMoveGrabPlanner.maxTitleBarHeight else {
+            return nil
         }
-        candidates += [frame.minX + 90, frame.maxX - 60, frame.minX + 20, frame.maxX - 150].map { CGPoint(x: $0, y: frame.minY + 10) }
+        return CGPoint(x: titleFrame.midX, y: titleFrame.midY)
+    }
+
+    /// Bounded Accessibility walk of the top strip (max depth 4, max 80 nodes, skips web/scroll
+    /// subtrees) that collects frames of interactive controls so we can compute empty gaps between them.
+    private func topStripObstacles(in window: AXUIElement, frame: CGRect) -> [CGRect] {
+        var obstacles: [CGRect] = []
+        for attr in [kAXCloseButtonAttribute, kAXMinimizeButtonAttribute, kAXZoomButtonAttribute, kAXFullScreenButtonAttribute] {
+            if let rect = buttonFrame(attr, of: window) {
+                obstacles.append(rect)
+            }
+        }
+        let stripMaxY = frame.minY + DesktopMoveGrabPlanner.maxTitleBarHeight
+        var visited = 0
+        let maxVisited = 80
+
+        func walk(_ element: AXUIElement, depth: Int) {
+            guard depth <= 4, visited < maxVisited else { return }
+            for child in children(of: element) {
+                visited += 1
+                guard visited <= maxVisited else { return }
+                let role = stringAttribute(kAXRoleAttribute, of: child) ?? ""
+                let subrole = stringAttribute(kAXSubroleAttribute, of: child)
+
+                // Never walk into web page content or scroll views
+                if role == "AXWebArea" || role == "AXScrollArea" { continue }
+
+                let childFrame = self.frame(of: child)
+                if let childFrame, childFrame.minY > stripMaxY { continue }
+
+                // A tab group often spans the full bar width with empty draggable space after the
+                // last tab; record individual tab children as obstacles instead of the whole group.
+                if role == "AXTabGroup" {
+                    let tabChildren = children(of: child)
+                    if !tabChildren.isEmpty {
+                        walk(child, depth: depth + 1)
+                        continue
+                    }
+                }
+
+                let isControl = DesktopMoveGrabPlanner.controlRoles.contains(role)
+                    || (subrole.map { DesktopMoveGrabPlanner.controlSubroles.contains($0) } ?? false)
+                if isControl {
+                    if let childFrame, childFrame.width > 0, childFrame.height > 0, childFrame.maxY >= frame.minY {
+                        obstacles.append(childFrame)
+                    }
+                    continue
+                }
+
+                if depth < 4 {
+                    walk(child, depth: depth + 1)
+                }
+            }
+        }
+
+        walk(window, depth: 1)
+        return obstacles
+    }
+
+    /// Fast, non-blocking primary grab plan. Computes fallback candidates lazily only if needed.
+    private func primaryGrabPlan(
+        in window: AXUIElement, frame: CGRect, button: CGRect?, pid: pid_t,
+        appKey: String, windows: [(pid: pid_t, frame: CGRect)], didRetrySlowAX: Bool
+    ) -> GrabPlanOutcome {
+        let systemWide = AXUIElementCreateSystemWide()
+
+        // 0. Per-app session anchor memory: re-verify it is still on top and not over a control.
+        if let cached = grabMemory.resolve(for: appKey, in: frame, buttonFrame: button),
+           SpaceBarController.windowIsOnTop(pid: pid, at: cached, among: windows),
+           let info = classifySpot(at: cached, frame: frame, pid: pid, systemWide: systemWide),
+           info.tier != .control {
+            return .ready(GrabPlan(points: [cached], isGuess: false, usedCache: true))
+        }
+
+        // 1. Spots right next to the traffic lights (instant path for standard macOS apps).
+        var firstWebOrContainer: CGPoint?
+        if let button {
+            let nextToButtons = [10.0, 28.0, 56.0].map { CGPoint(x: button.maxX + $0, y: button.midY) }
+            for point in nextToButtons where frame.contains(point) {
+                guard SpaceBarController.windowIsOnTop(pid: pid, at: point, among: windows),
+                      let info = classifySpot(at: point, frame: frame, pid: pid, systemWide: systemWide) else { continue }
+                if info.tier == .chrome {
+                    return .ready(GrabPlan(points: [point], isGuess: false))
+                }
+                if info.tier == .webOrContainer && firstWebOrContainer == nil {
+                    firstWebOrContainer = point
+                }
+            }
+        }
+
+        // 2. Native window title element (`AXTitleUIElement`), if unobstructed and outside controls.
+        if let titlePoint = titleElementCenter(in: window, frame: frame),
+           SpaceBarController.windowIsOnTop(pid: pid, at: titlePoint, among: windows),
+           let info = classifySpot(at: titlePoint, frame: frame, pid: pid, systemWide: systemWide),
+           info.tier == .chrome {
+            return .ready(GrabPlan(points: [titlePoint], isGuess: false))
+        }
+
+        // 3. Structural empty gaps between top-strip controls (tabs, buttons, search fields).
+        let obstacles = topStripObstacles(in: window, frame: frame)
+        let rows = DesktopMoveGrabPlanner.titleBarRows(for: frame, buttonFrame: button)
+        if let primaryRow = rows.first {
+            let primaryGaps = DesktopMoveGrabPlanner.emptyGapMidpoints(in: frame, rowY: primaryRow, obstacles: obstacles)
+            for point in primaryGaps.prefix(3) where frame.contains(point) {
+                guard SpaceBarController.windowIsOnTop(pid: pid, at: point, among: windows),
+                      let info = classifySpot(at: point, frame: frame, pid: pid, systemWide: systemWide) else { continue }
+                if info.tier == .chrome {
+                    return .ready(GrabPlan(points: [point], isGuess: false))
+                }
+            }
+        }
+
+        // 4. Sidebar-tab browsers (Zen, Arc) hide traffic lights and keep toolbar space along the top.
+        let alongTop = [frame.midX, frame.minX + 90, frame.minX + 20, frame.minX + 50, frame.minX + 130, frame.maxX - 60, frame.maxX - 150]
+            .map { CGPoint(x: $0, y: frame.minY + 10) }
+        var firstChromeAlongTop: CGPoint?
+        for point in alongTop where frame.contains(point) {
+            guard SpaceBarController.windowIsOnTop(pid: pid, at: point, among: windows),
+                  let info = classifySpot(at: point, frame: frame, pid: pid, systemWide: systemWide) else { continue }
+            if info.tier == .chrome && info.inToolbar {
+                return .ready(GrabPlan(points: [point], isGuess: false))
+            }
+            if info.tier == .chrome && firstChromeAlongTop == nil {
+                firstChromeAlongTop = point
+            }
+        }
+        if button == nil && !didRetrySlowAX && firstWebOrContainer == nil {
+            return .retrySlowAX
+        }
+        if let point = firstChromeAlongTop {
+            return .ready(GrabPlan(points: [point], isGuess: false))
+        }
+
+        // 5. Multi-row adaptive probe plan (Electron/web title bars, frameless and Wine windows).
+        let probePoints = buildProbeCandidates(
+            leading: firstWebOrContainer,
+            excluding: [],
+            frame: frame,
+            button: button,
+            obstacles: obstacles,
+            pid: pid,
+            windows: windows,
+            systemWide: systemWide,
+            limit: Self.probeLimit
+        )
+        return probePoints.isEmpty ? .none : .ready(GrabPlan(points: probePoints, isGuess: true))
+    }
+
+    /// Lazily built fallback candidates when a confirmed or cached spot did not drag the window.
+    private func fallbackSpots(
+        after failed: CGPoint, in window: AXUIElement, frame: CGRect, button: CGRect?, pid: pid_t
+    ) -> [CGPoint] {
         let windows = SpaceBarController.windowsFrontToBack()
-        let usable = barePagePoints(candidates, frame: frame, pid: pid)
-            .filter { SpaceBarController.windowIsOnTop(pid: pid, at: $0, among: windows) }
-        return SpaceBarController.fallbackOrder(after: failed, candidates: usable, limit: Self.fallbackLimit)
+        let systemWide = AXUIElementCreateSystemWide()
+        let obstacles = topStripObstacles(in: window, frame: frame)
+        var extraLeading: [CGPoint] = []
+        if let titlePoint = titleElementCenter(in: window, frame: frame) {
+            extraLeading.append(titlePoint)
+        }
+        if let button {
+            extraLeading += [10.0, 28.0, 56.0].map { CGPoint(x: button.maxX + $0, y: button.midY) }
+        }
+        return buildProbeCandidates(
+            leading: nil,
+            extraLeading: extraLeading,
+            excluding: [failed],
+            frame: frame,
+            button: button,
+            obstacles: obstacles,
+            pid: pid,
+            windows: windows,
+            systemWide: systemWide,
+            limit: Self.fallbackLimit
+        )
+    }
+
+    /// Combines structural empty gaps and width-adaptive X sweeps across all title-bar rows,
+    /// rejects any spot inside a control or covered by another window, and orders by hit tier.
+    private func buildProbeCandidates(
+        leading: CGPoint?,
+        extraLeading: [CGPoint] = [],
+        excluding: [CGPoint],
+        frame: CGRect,
+        button: CGRect?,
+        obstacles: [CGRect],
+        pid: pid_t,
+        windows: [(pid: pid_t, frame: CGRect)],
+        systemWide: AXUIElement,
+        limit: Int
+    ) -> [CGPoint] {
+        var raw: [CGPoint] = []
+        if let leading { raw.append(leading) }
+        raw.append(contentsOf: extraLeading)
+
+        let rows = DesktopMoveGrabPlanner.titleBarRows(for: frame, buttonFrame: button)
+        for (rowIndex, rowY) in rows.enumerated() {
+            raw.append(contentsOf: DesktopMoveGrabPlanner.emptyGapMidpoints(in: frame, rowY: rowY, obstacles: obstacles))
+            let rowButtonsMaxX: CGFloat? = (rowIndex == 0) ? button?.maxX : nil
+            let xs = DesktopMoveGrabPlanner.adaptiveXs(in: frame, buttonsMaxX: rowButtonsMaxX)
+            raw.append(contentsOf: xs.map { CGPoint(x: $0, y: rowY) })
+        }
+
+        // Pre-deduplicate raw points so we issue minimal AX IPCs while keeping every row covered.
+        var dedupedRaw: [CGPoint] = []
+        for point in raw where frame.contains(point) {
+            if excluding.contains(where: { abs($0.x - point.x) < 20 && abs($0.y - point.y) < 20 }) {
+                continue
+            }
+            if dedupedRaw.contains(where: { abs($0.x - point.x) < 18 && abs($0.y - point.y) < 18 }) {
+                continue
+            }
+            dedupedRaw.append(point)
+            if dedupedRaw.count >= 24 { break }
+        }
+
+        var classified: [(point: CGPoint, tier: GrabHitTier)] = []
+        for point in dedupedRaw {
+            guard SpaceBarController.windowIsOnTop(pid: pid, at: point, among: windows),
+                  let info = classifySpot(at: point, frame: frame, pid: pid, systemWide: systemWide),
+                  info.tier != .control else { continue }
+            classified.append((point, info.tier))
+        }
+
+        // Keep an explicit leading web/title-bar spot (e.g. Vivaldi next-to-buttons) first.
+        if let leading, let idx = classified.firstIndex(where: { $0.point == leading }) {
+            let lead = classified.remove(at: idx)
+            let rest = DesktopMoveGrabPlanner.prioritizeCandidates(
+                classified, excluding: excluding + [lead.point], limit: max(0, limit - 1)
+            )
+            return [lead.point] + rest
+        }
+        return DesktopMoveGrabPlanner.prioritizeCandidates(classified, excluding: excluding, limit: limit)
     }
 
     /// The spots to probe after `failed`: none close to it or to one another, at most `limit`.
     nonisolated static func fallbackOrder(after failed: CGPoint, candidates: [CGPoint], limit: Int) -> [CGPoint] {
         Array(probeOrder(first: failed, then: candidates).dropFirst().prefix(limit))
-    }
-
-    private func primaryGrabPlan(in window: AXUIElement, frame: CGRect, pid: pid_t) -> GrabPlan? {
-        var nextToButtons: [CGPoint] = []
-        let button = buttonFrame(kAXZoomButtonAttribute, of: window)
-            ?? buttonFrame(kAXFullScreenButtonAttribute, of: window)
-            ?? buttonFrame(kAXCloseButtonAttribute, of: window)
-        if let button {
-            for offset in [10.0, 28.0, 56.0] {
-                nextToButtons.append(CGPoint(x: button.maxX + offset, y: button.midY))
-            }
-        }
-        // Vivaldi and apps alike draw their title bar as a web page, which still drags the window.
-        // A page never starts level with the window buttons, so web content there is title bar.
-        if let spot = firstDragSpot(nextToButtons, frame: frame, pid: pid, inToolbarOnly: false, webIsTitleBar: true) {
-            guard spot.isWebContent else {
-                return GrabPlan(points: [spot.point], isGuess: false)
-            }
-            // MARK: - Workaround: Web content next to the window buttons is not always title bar
-            // Cause: Orca draws its title bar as a page and has controls right after the window
-            //        buttons. The spot answers as a plain group inside the page, like Vivaldi's
-            //        title bar does, but a press there drags nothing and the window stays behind.
-            // Context: Such a spot is a guess, so it is probed like the others: it goes first, as
-            //          it works for Vivaldi, and the guessed spots along the title bar follow.
-            var guesses: [CGPoint] = []
-            if let button {
-                let xs = SpaceBarController.guessedGrabXs(buttonsMaxX: button.maxX, frameMinX: frame.minX, frameMaxX: frame.maxX)
-                guesses = barePagePoints(xs.map { CGPoint(x: $0, y: button.midY) }, frame: frame, pid: pid)
-                    .filter { SpaceBarController.windowIsOnTop(pid: pid, at: $0, among: SpaceBarController.windowsFrontToBack()) }
-            }
-            return GrabPlan(points: SpaceBarController.probeOrder(first: spot.point, then: guesses), isGuess: true)
-        }
-        // Browsers with tabs in a sidebar hide these buttons and have empty toolbar space in the corners.
-        let alongTop = [frame.midX, frame.minX + 90, frame.minX + 20, frame.minX + 50, frame.minX + 130, frame.maxX - 60, frame.maxX - 150]
-            .map { CGPoint(x: $0, y: frame.minY + 10) }
-        // MARK: - Workaround: Zen describes its page only a while after it is first asked
-        // Until then the page answers as a bare window, so a toolbar spot is looked for first, twice.
-        for attempt in 0..<2 {
-            if attempt > 0 { Thread.sleep(forTimeInterval: 0.25) }
-            if let point = firstDragPoint(alongTop, frame: frame, pid: pid, inToolbarOnly: true) {
-                return GrabPlan(points: [point], isGuess: false)
-            }
-        }
-        if let point = firstDragPoint(alongTop, frame: frame, pid: pid, inToolbarOnly: false) {
-            return GrabPlan(points: [point], isGuess: false)
-        }
-        // Claude and apps alike draw their whole title bar as a page with nothing in it to point at.
-        // Only bare page level with the window buttons counts, so no window that moved before changes.
-        guard let button else { return nil }
-        let xs = SpaceBarController.guessedGrabXs(buttonsMaxX: button.maxX, frameMinX: frame.minX, frameMaxX: frame.maxX)
-        let points = barePagePoints(xs.map { CGPoint(x: $0, y: button.midY) }, frame: frame, pid: pid)
-            .filter { SpaceBarController.windowIsOnTop(pid: pid, at: $0, among: SpaceBarController.windowsFrontToBack()) }
-        return points.isEmpty ? nil : GrabPlan(points: points, isGuess: true)
     }
 
     /// The spots to probe when the first one is itself a guess: it stays first, and guessed
@@ -1451,18 +1757,23 @@ final class SpaceBarController: ObservableObject {
         return result
     }
 
-    /// Every window on screen, front to back, with its owner and frame (top-left origin).
-    /// Rapto's own windows are left out: the border around the active window covers all of it
-    /// and lets clicks through, and the ones that take clicks (the group indicator) are told
-    /// apart by the hit test, which answers with Rapto there.
+    /// Real app windows on screen, front to back, with their owner and frame (top-left origin).
+    /// Excludes system overlay layers (such as Dock's full-screen layer-20 window and Window Server)
+    /// and Rapto's own windows (the active-window border is click-through, and clickable Rapto
+    /// windows such as the group indicator are still caught by AX hit-testing `hitPID == pid`).
     private static func windowsFrontToBack() -> [(pid: pid_t, frame: CGRect)] {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let ownPID = ProcessInfo.processInfo.processIdentifier
         return list.compactMap { info in
-            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID,
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"],
-                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { return nil }
+                  let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"] else { return nil }
+            let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+            let owner = info[kCGWindowOwnerName as String] as? String ?? ""
+            let alpha = info[kCGWindowAlpha as String] as? Double ?? 1
+            guard DesktopMoveGrabPlanner.isBlockingWindow(
+                layer: layer, owner: owner, alpha: alpha, pid: pid, ownPID: ownPID
+            ) else { return nil }
             return (pid, CGRect(x: x, y: y, width: width, height: height))
         }
     }
@@ -1490,107 +1801,47 @@ final class SpaceBarController: ObservableObject {
         return result
     }
 
-    /// The spots where no button, link or text field is hit: the page itself first, then
-    /// anything else that is not a control. A group or a split view is sometimes a part of the
-    /// title bar (Hark, Simplenote) and sometimes a container of controls; probing tells.
-    private func barePagePoints(_ candidates: [CGPoint], frame: CGRect, pid: pid_t) -> [CGPoint] {
-        let systemWide = AXUIElementCreateSystemWide()
-        var pages: [CGPoint] = []
-        var others: [CGPoint] = []
-        for point in candidates where frame.contains(point) {
-            var hit: AXUIElement?
-            guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit) == .success,
-                  let hit else { continue }
-            var hitPID: pid_t = 0
-            AXUIElementGetPid(hit, &hitPID)
-            let role = stringAttribute(kAXRoleAttribute, of: hit)
-            logger.notice("Move: bare page check at \(String(describing: point), privacy: .public) pid \(hitPID) role \(role ?? "?", privacy: .public)")
-            guard hitPID == pid, let role else { continue }
-            switch SpaceBarController.guessKind(forRole: role) {
-            case .page: pages.append(point)
-            case .other: others.append(point)
-            case .control: break
-            }
-        }
-        return pages + others
-    }
-
     nonisolated enum GuessKind { case page, other, control }
 
     nonisolated static func guessKind(forRole role: String) -> GuessKind {
         if role == "AXWebArea" { return .page }
-        return controlRoleNames.contains(role) ? .control : .other
+        return DesktopMoveGrabPlanner.controlRoles.contains(role) ? .control : .other
     }
 
-    /// Dragging one of these tears a tab off, and a click presses it.
-    nonisolated private static let controlRoleNames: Set<String> = [
-        "AXButton", "AXRadioButton", "AXTabGroup", "AXTextField", "AXTextArea", "AXPopUpButton", "AXMenuButton",
-        "AXCheckBox", "AXComboBox", "AXSlider", "AXTab", "AXLink", "AXMenuItem", "AXMenuBarItem"
-    ]
-
-    private func firstDragPoint(
-        _ candidates: [CGPoint], frame: CGRect, pid: pid_t, inToolbarOnly: Bool, webIsTitleBar: Bool = false
-    ) -> CGPoint? {
-        firstDragSpot(candidates, frame: frame, pid: pid, inToolbarOnly: inToolbarOnly, webIsTitleBar: webIsTitleBar)?.point
-    }
-
-    /// `isWebContent`: the spot counts as a drag area only because web content was let through.
-    private func firstDragSpot(
-        _ candidates: [CGPoint], frame: CGRect, pid: pid_t, inToolbarOnly: Bool, webIsTitleBar: Bool = false
-    ) -> (point: CGPoint, isWebContent: Bool)? {
-        let systemWide = AXUIElementCreateSystemWide()
-        for point in candidates where frame.contains(point) {
-            var hit: AXUIElement?
-            let status = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit)
-            guard status == .success, let hit else {
-                logger.notice("Move: nothing at \(String(describing: point), privacy: .public) (\(status.rawValue))")
-                continue
-            }
-            var hitPID: pid_t = 0
-            AXUIElementGetPid(hit, &hitPID)
-            let chain = roleChain(of: hit)
-            logger.notice("Move: at \(String(describing: point), privacy: .public) pid \(hitPID) roles \(chain, privacy: .public)")
-            guard hitPID == pid, isDragArea(hit, webIsTitleBar: webIsTitleBar) else { continue }
-            if inToolbarOnly, !chain.contains(kAXToolbarRole) { continue }
-            return (point, webIsTitleBar && !isDragArea(hit, webIsTitleBar: false))
+    /// Performs one Accessibility hit test and classifies its full ancestor chain up to `AXWindow`.
+    private func classifySpot(
+        at point: CGPoint, frame: CGRect, pid: pid_t, systemWide: AXUIElement
+    ) -> (tier: GrabHitTier, inToolbar: Bool)? {
+        guard frame.contains(point) else { return nil }
+        var hit: AXUIElement?
+        let status = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit)
+        guard status == .success, let hit else {
+            logger.notice("Move: nothing at \(String(describing: point), privacy: .public) (\(status.rawValue))")
+            return nil
         }
-        return nil
+        var hitPID: pid_t = 0
+        AXUIElementGetPid(hit, &hitPID)
+        let chain = hitChain(of: hit)
+        let summary = chain.prefix(5).map(\.role).joined(separator: " < ")
+        logger.notice("Move: at \(String(describing: point), privacy: .public) pid \(hitPID) roles \(summary, privacy: .public)")
+        guard hitPID == pid else { return nil }
+        let tier = DesktopMoveGrabPlanner.classifyHitChain(chain)
+        let inToolbar = chain.contains { $0.role == kAXToolbarRole }
+        return (tier, inToolbar)
     }
 
-    private static let dragRoles: Set<String> = [
-        kAXWindowRole, kAXToolbarRole, kAXGroupRole, kAXStaticTextRole, kAXUnknownRole
-    ]
-    private static let controlRoles: Set<String> = [
-        kAXButtonRole, kAXRadioButtonRole, kAXTabGroupRole, kAXTextFieldRole, kAXPopUpButtonRole,
-        kAXMenuButtonRole, kAXCheckBoxRole, kAXComboBoxRole, "AXTab", "AXLink", "AXWebArea"
-    ]
-
-    /// Dragging a tab tears it off and a click on a control presses it.
-    private func isDragArea(_ element: AXUIElement, webIsTitleBar: Bool) -> Bool {
-        guard let role = stringAttribute(kAXRoleAttribute, of: element), Self.dragRoles.contains(role) else { return false }
-        let controlRoles = webIsTitleBar ? Self.controlRoles.subtracting(["AXWebArea"]) : Self.controlRoles
+    private func hitChain(of element: AXUIElement) -> [(role: String, subrole: String?)] {
+        var result: [(role: String, subrole: String?)] = []
         var current: AXUIElement? = element
-        // Web pages nest their content deep, so look all the way up to the window.
         for _ in 0..<16 {
             guard let node = current else { break }
-            if let role = stringAttribute(kAXRoleAttribute, of: node) {
-                if role == kAXWindowRole { return true }
-                if controlRoles.contains(role) { return false }
-            }
+            let role = stringAttribute(kAXRoleAttribute, of: node) ?? "?"
+            let subrole = stringAttribute(kAXSubroleAttribute, of: node)
+            result.append((role, subrole))
+            if role == kAXWindowRole { break }
             current = elementAttribute(kAXParentAttribute, of: node)
         }
-        return true
-    }
-
-    private func roleChain(of element: AXUIElement) -> String {
-        var roles: [String] = []
-        var current: AXUIElement? = element
-        for _ in 0..<5 {
-            guard let node = current else { break }
-            roles.append(stringAttribute(kAXRoleAttribute, of: node) ?? "?")
-            current = elementAttribute(kAXParentAttribute, of: node)
-        }
-        return roles.joined(separator: " < ")
+        return result
     }
 
     private func frame(of element: AXUIElement) -> CGRect? {

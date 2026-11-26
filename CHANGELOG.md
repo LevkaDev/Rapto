@@ -10,6 +10,26 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Changed
+- **More reliable and faster desktop window move grabbing** (`DesktopMoveGrabPlanner`,
+  `DesktopMoveGrabMemory`, `SpaceBarController`):
+  - Computes widest empty horizontal gaps between top-strip Accessibility controls (and checks
+    `AXTitleUIElement`) instead of relying only on fixed pixel offsets.
+  - Scans up to three title-bar rows (primary, top hairline strip, lower toolbar) with
+    width-adaptive X coverage and supports windows without standard traffic-light buttons.
+  - Rejects any element whose Accessibility ancestor chain or subrole belongs to an interactive
+    control (`AXGroup < AXButton`, `AXTabButton`, etc.) and prioritizes native chrome before web
+    and container fallbacks.
+  - Escalates drags from `5 pt` to `14 pt` inward without releasing the mouse button (handling
+    Catalyst/Electron drag thresholds), verifies movement via both Core Graphics and Accessibility,
+    recovers late followers on release, builds fallback candidates lazily instead of eagerly, and
+    replaces the synchronous 250 ms main-thread sleep with an async retry.
+  - Caches proven per-app relative grab anchors in session memory (invalidating automatically if
+    a cached spot stops dragging or a move fails).
+  - Filters system overlay layers (`layer < 0` or `layer >= 20`, including Dock's full-screen
+    layer-20 container on macOS 26 and Window Server) out of `windowsFrontToBack` so system
+    overlays no longer cause `windowIsOnTop` to reject every title-bar spot.
+
 ## [6.2] - 2026-11-26
 
 ### Added
