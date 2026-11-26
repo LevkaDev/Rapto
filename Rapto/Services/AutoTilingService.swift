@@ -102,6 +102,9 @@ class AutoTilingService: ObservableObject {
 
     /// Called after one or more windows snapped back to their Auto-tiling slot (CG slot frame, screenID).
     var onWindowSnappedBack: ((CGRect, String) -> Void)?
+
+    /// Called with `true` right before a batch window move starts and `false` once it completes.
+    var onLayoutTransition: ((Bool) -> Void)? = nil
     
     var isFollowAppToMonitorEnabled: (() -> Bool)? = nil
 
@@ -1107,25 +1110,35 @@ class AutoTilingService: ObservableObject {
         // When Window A moves to position X, searching for Window B at position X will find Window A.
         let allWindowsToPosition = newSlots.flatMap { $0.windows }
         let axWindowCache = accessibilityService.batchGetAXWindows(for: allWindowsToPosition)
-        
-        for slot in newSlots {
-            guard !slot.isEmpty else { continue }
-            
-            for (windowIndex, window) in slot.windows.enumerated() {
-                if let cachedAXWindow = axWindowCache[window.windowID] {
-                    let result = accessibilityService.setWindowFrame(axWindow: cachedAXWindow, frame: slot.frame, windowTitle: window.title, windowID: window.windowID)
-                    logger.debug("Positioning '\(window.title)' to slot \(slot.index): result=\(result), frame=(\(slot.frame.origin.x),\(slot.frame.origin.y),\(slot.frame.width),\(slot.frame.height))")
-                    
-                    // Only a group needs its primary on top; raising every tile reshuffles the stacking order
-                    if windowIndex == 0 && slot.windowCount > 1 {
-                        accessibilityService.raiseWindow(axWindow: cachedAXWindow)
-                    }
-                } else {
-                    logger.warning("No cached AXWindow for '\(window.title)' (ID: \(window.windowID)), skipping positioning")
-                }
+
+        var batchTargets: [AccessibilityService.BatchFrameTarget] = []
+        batchTargets.reserveCapacity(allWindowsToPosition.count)
+        for slot in newSlots where !slot.isEmpty {
+            for window in slot.windows.reversed() {
+                batchTargets.append(
+                    AccessibilityService.BatchFrameTarget(
+                        window: window,
+                        axWindow: axWindowCache[window.windowID],
+                        frame: slot.frame
+                    )
+                )
             }
-            
-            logger.debug("Positioned \(slot.windowCount) windows in slot \(slot.index + 1)")
+        }
+
+        var startedTransition = false
+        _ = accessibilityService.batchSetWindowFrames(batchTargets) { [weak self] in
+            startedTransition = true
+            self?.onLayoutTransition?(true)
+        }
+
+        // Only a group needs its primary on top; raising every tile reshuffles the stacking order
+        for slot in newSlots where slot.windowCount > 1 {
+            if let primary = slot.primaryWindow, let cachedAXWindow = axWindowCache[primary.windowID] {
+                accessibilityService.raiseWindow(axWindow: cachedAXWindow)
+            }
+        }
+        if startedTransition {
+            onLayoutTransition?(false)
         }
     }
     
@@ -1395,7 +1408,9 @@ class AutoTilingService: ObservableObject {
         let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         var frontmostWindowToRaise: WindowInfo?
         var focusedWindowToRaise: WindowInfo?
-        
+        var batchTargets: [AccessibilityService.BatchFrameTarget] = []
+        var groupedFrontWindowsToRaise: [WindowInfo] = []
+
         for slot in newSlots {
             guard !slot.isEmpty else { continue }
 
@@ -1404,82 +1419,83 @@ class AutoTilingService: ObservableObject {
                 focusedWindowToRaise = focused
                 continue
             }
-            
+
             if slot.windowCount == 1 {
                 let window = slot.primaryWindow!
-                
-                let success: Bool
-                if let cachedAXWindow = axWindowCache[window.windowID] {
-                    success = accessibilityService.setWindowFrame(axWindow: cachedAXWindow, frame: slot.frame, windowTitle: window.title, windowID: window.windowID)
-                } else {
-                    debugLog("AutoTiling", "⚠️ No cached AXWindow for \(window.windowID), using fallback lookup")
-                    success = accessibilityService.setWindowFrame(window, frame: slot.frame)
-                }
-                
-                if success {
-                    logger.debug("Placed '\(window.title)' in slot \(slot.index + 1) on screen \(screenID)")
-                    layoutManager.updateWindowFrame(window.windowID, newFrame: accessibilityService.expectedFrame(slot.frame, windowID: window.windowID), forScreenID: screenID)
-                }
-                
+                batchTargets.append(
+                    AccessibilityService.BatchFrameTarget(
+                        window: window,
+                        axWindow: axWindowCache[window.windowID],
+                        frame: slot.frame
+                    )
+                )
                 if window.ownerPID == frontmostPID {
                     frontmostWindowToRaise = window
                 }
             } else {
                 logger.info("Slot \(slot.index + 1) has \(slot.windowCount) windows (group)")
-                
                 let frontmostInGroup = slot.windows.first { $0.ownerPID == frontmostPID }
-                
-                // Position non-frontmost windows first (they go behind)
-                for window in slot.windows {
-                    if window.windowID == frontmostInGroup?.windowID { continue } // Position frontmost last
-                    
-                    let success: Bool
-                    if let cachedAXWindow = axWindowCache[window.windowID] {
-                        success = accessibilityService.setWindowFrame(axWindow: cachedAXWindow, frame: slot.frame, windowTitle: window.title, windowID: window.windowID)
-                    } else {
-                        success = accessibilityService.setWindowFrame(window, frame: slot.frame)
-                    }
-                    
-                    if success {
-                        layoutManager.updateWindowFrame(window.windowID, newFrame: accessibilityService.expectedFrame(slot.frame, windowID: window.windowID), forScreenID: screenID)
-                    }
-                    logger.debug("Positioned grouped window '\(window.title)' in slot \(slot.index + 1)")
+
+                // Queue non-frontmost windows first (reversed so primary runs last), then frontmost last
+                for window in slot.windows.reversed() where window.windowID != frontmostInGroup?.windowID {
+                    batchTargets.append(
+                        AccessibilityService.BatchFrameTarget(
+                            window: window,
+                            axWindow: axWindowCache[window.windowID],
+                            frame: slot.frame
+                        )
+                    )
                 }
-                
+
                 if let frontmost = frontmostInGroup {
-                    let success: Bool
-                    if let cachedAXWindow = axWindowCache[frontmost.windowID] {
-                        success = accessibilityService.setWindowFrame(axWindow: cachedAXWindow, frame: slot.frame, windowTitle: frontmost.title, windowID: frontmost.windowID)
-                    } else {
-                        success = accessibilityService.setWindowFrame(frontmost, frame: slot.frame)
-                    }
-                    
-                    if success {
-                        layoutManager.updateWindowFrame(frontmost.windowID, newFrame: accessibilityService.expectedFrame(slot.frame, windowID: frontmost.windowID), forScreenID: screenID)
-                    }
+                    batchTargets.append(
+                        AccessibilityService.BatchFrameTarget(
+                            window: frontmost,
+                            axWindow: axWindowCache[frontmost.windowID],
+                            frame: slot.frame
+                        )
+                    )
                     frontmostWindowToRaise = frontmost
-                    logger.debug("Positioned frontmost window '\(frontmost.title)' in slot \(slot.index + 1)")
+                    groupedFrontWindowsToRaise.append(frontmost)
                 } else if let activeWindow = slot.primaryWindow {
-                    let success: Bool
-                    if let cachedAXWindow = axWindowCache[activeWindow.windowID] {
-                        success = accessibilityService.setWindowFrame(axWindow: cachedAXWindow, frame: slot.frame, windowTitle: activeWindow.title, windowID: activeWindow.windowID)
-                    } else {
-                        success = accessibilityService.setWindowFrame(activeWindow, frame: slot.frame)
-                    }
-                    
-                    if success {
-                        layoutManager.updateWindowFrame(activeWindow.windowID, newFrame: accessibilityService.expectedFrame(slot.frame, windowID: activeWindow.windowID), forScreenID: screenID)
-                        logger.debug("Placed primary window '\(activeWindow.title)' in slot \(slot.index + 1)")
-                    }
+                    groupedFrontWindowsToRaise.append(activeWindow)
                 }
             }
         }
-        
-        // Raise frontmost window AFTER all positioning
-        // This ensures the newly added window stays on top and focused
+
+        var startedTransition = false
+        let moveResults = accessibilityService.batchSetWindowFrames(batchTargets) { [weak self] in
+            startedTransition = true
+            self?.onLayoutTransition?(true)
+        }
+
+        for target in batchTargets where moveResults[target.window.windowID] == true {
+            layoutManager.updateWindowFrame(
+                target.window.windowID,
+                newFrame: accessibilityService.expectedFrame(target.frame, windowID: target.window.windowID),
+                forScreenID: screenID
+            )
+        }
+
+        // Keep grouped slots' active window on top without activating background apps
+        for frontWindow in groupedFrontWindowsToRaise {
+            if let axWin = axWindowCache[frontWindow.windowID] {
+                accessibilityService.raiseWindow(axWindow: axWin)
+            }
+        }
+
+        // Keep the focused/frontmost window on top without re-activating an already-frontmost app
         if let frontmost = focusedWindowToRaise ?? frontmostWindowToRaise {
-            accessibilityService.raiseWindow(frontmost)
+            if frontmost.ownerPID == frontmostPID, let axWin = axWindowCache[frontmost.windowID] {
+                accessibilityService.raiseWindow(axWindow: axWin)
+            } else {
+                accessibilityService.raiseWindow(frontmost)
+            }
             logger.info("Raised frontmost window '\(frontmost.title)' after redistribution")
+        }
+
+        if startedTransition {
+            onLayoutTransition?(false)
         }
         
         let currentWindowIDs = Set(eligibleWindows.map { $0.windowID })

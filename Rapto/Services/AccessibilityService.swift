@@ -569,6 +569,179 @@ class AccessibilityService {
         return result
     }
     
+    /// A single window and target CG frame for `batchSetWindowFrames`.
+    struct BatchFrameTarget {
+        let window: WindowInfo
+        let axWindow: AXUIElement?
+        let frame: CGRect
+    }
+
+    private struct UncheckedAXBox: @unchecked Sendable {
+        let element: AXUIElement
+        let frame: CGRect
+    }
+
+    /// Whether two frames already match within `tolerance` points on every edge.
+    nonisolated static func framesMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat = 1.5) -> Bool {
+        abs(lhs.minX - rhs.minX) <= tolerance
+            && abs(lhs.minY - rhs.minY) <= tolerance
+            && abs(lhs.width - rhs.width) <= tolerance
+            && abs(lhs.height - rhs.height) <= tolerance
+    }
+
+    /// Groups target indices by owning PID while preserving relative order inside each app bucket.
+    /// Distinct PIDs can safely receive AX frame updates concurrently; windows of the same app run in order.
+    nonisolated static func groupTargetsByPID(_ items: [(index: Int, pid: pid_t)]) -> [[Int]] {
+        var bucketIndexByPID: [pid_t: Int] = [:]
+        var buckets: [[Int]] = []
+        for item in items {
+            if let bucketIndex = bucketIndexByPID[item.pid] {
+                buckets[bucketIndex].append(item.index)
+            } else {
+                bucketIndexByPID[item.pid] = buckets.count
+                buckets.append([item.index])
+            }
+        }
+        return buckets
+    }
+
+    /// Moves and resizes multiple windows simultaneously so layout changes happen in one calm beat
+    /// instead of a serial domino sequence. Windows already at their expected frame are skipped,
+    /// distinct apps receive AX updates concurrently, and all windows share a single verification pass.
+    @discardableResult
+    func batchSetWindowFrames(
+        _ targets: [BatchFrameTarget],
+        onWillMove: (() -> Void)? = nil
+    ) -> [CGWindowID: Bool] {
+        guard !targets.isEmpty else { return [:] }
+
+        var results: [CGWindowID: Bool] = [:]
+        let initialCGFrames = onScreenCGFramesByWindowID()
+
+        struct PendingMove {
+            let window: WindowInfo
+            let axWindow: AXUIElement
+            let frame: CGRect
+            let expected: CGRect
+        }
+
+        var pending: [PendingMove] = []
+        for target in targets {
+            let wid = target.window.windowID
+            if TourSandboxWindows.contains(wid) {
+                let ok = MainActor.assumeIsolated {
+                    TourSandboxWindows.shared.setCGFrame(target.frame, for: wid)
+                }
+                results[wid] = ok
+                continue
+            }
+            guard let axWindow = target.axWindow ?? getAXWindow(for: target.window) else {
+                debugLog("AccessibilityService", "❌ batchSetWindowFrames could not find AXWindow for '\(target.window.title)' windowID=\(wid)")
+                results[wid] = false
+                continue
+            }
+            let expected = expectedFrame(target.frame, windowID: wid)
+            if let current = initialCGFrames[wid] ?? axFrame(of: axWindow),
+               Self.framesMatch(current, expected, tolerance: 1.5) {
+                debugLog("AccessibilityService", "🎯 batchSetWindowFrames '\(target.window.title)' windowID=\(wid) already in place")
+                results[wid] = true
+                continue
+            }
+            pending.append(PendingMove(window: target.window, axWindow: axWindow, frame: target.frame, expected: expected))
+        }
+
+        guard !pending.isEmpty else { return results }
+        onWillMove?()
+
+        func applyBatch(_ items: [PendingMove]) {
+            let boxes = items.map { UncheckedAXBox(element: $0.axWindow, frame: $0.frame) }
+            let buckets = Self.groupTargetsByPID(items.enumerated().map { ($0.offset, $0.element.window.ownerPID) })
+            let sendableBoxes = boxes
+            let sendableBuckets = buckets
+            DispatchQueue.concurrentPerform(iterations: sendableBuckets.count) { bucketIdx in
+                for itemIdx in sendableBuckets[bucketIdx] {
+                    let box = sendableBoxes[itemIdx]
+                    var point = box.frame.origin
+                    var size = box.frame.size
+                    guard let posVal = AXValueCreate(.cgPoint, &point),
+                          let sizeVal = AXValueCreate(.cgSize, &size) else { continue }
+                    // Size, position, size: prevents large windows moving to smaller edge slots from clamping
+                    AXUIElementSetAttributeValue(box.element, kAXSizeAttribute as CFString, sizeVal)
+                    AXUIElementSetAttributeValue(box.element, kAXPositionAttribute as CFString, posVal)
+                    AXUIElementSetAttributeValue(box.element, kAXSizeAttribute as CFString, sizeVal)
+                }
+            }
+        }
+
+        applyBatch(pending)
+
+        var unverified = pending
+        for attempt in 1...3 {
+            usleep(20000) // One shared 20ms settle window for the whole batch
+            let liveFrames = onScreenCGFramesByWindowID()
+            var stillMismatched: [PendingMove] = []
+
+            for item in unverified {
+                let wid = item.window.windowID
+                let actualFrame = liveFrames[wid] ?? axFrame(of: item.axWindow)
+                guard let actualFrame else {
+                    if attempt == 3 { results[wid] = true } else { stillMismatched.append(item) }
+                    continue
+                }
+                func sizeMatches(_ target: CGRect) -> Bool {
+                    abs(actualFrame.size.width - target.size.width) < 10 && abs(actualFrame.size.height - target.size.height) < 10
+                }
+                let positionMatch = abs(actualFrame.origin.x - item.frame.origin.x) < 10 && abs(actualFrame.origin.y - item.frame.origin.y) < 10
+
+                if positionMatch && sizeMatches(item.frame) {
+                    if let minimum = minimumSizes[wid],
+                       item.frame.width < minimum.width - 10 || item.frame.height < minimum.height - 10 {
+                        minimumSizes.removeValue(forKey: wid)
+                    }
+                    results[wid] = true
+                } else if positionMatch && item.expected != item.frame && sizeMatches(item.expected) {
+                    results[wid] = true
+                } else if attempt < 3 {
+                    stillMismatched.append(item)
+                } else if positionMatch,
+                          actualFrame.width > item.frame.width + 1 || actualFrame.height > item.frame.height + 1,
+                          actualFrame.width > item.frame.width - 10, actualFrame.height > item.frame.height - 10 {
+                    let known = minimumSizes[wid] ?? .zero
+                    minimumSizes[wid] = CGSize(
+                        width: actualFrame.width > item.frame.width + 1 ? max(known.width, actualFrame.width) : known.width,
+                        height: actualFrame.height > item.frame.height + 1 ? max(known.height, actualFrame.height) : known.height
+                    )
+                    results[wid] = true
+                } else {
+                    results[wid] = false
+                }
+            }
+
+            unverified = stillMismatched
+            if unverified.isEmpty { break }
+            if attempt < 3 {
+                applyBatch(unverified)
+            }
+        }
+
+        debugLog("AccessibilityService", "🎯 batchSetWindowFrames placed \(results.values.filter { $0 }.count)/\(targets.count) window(s)")
+        return results
+    }
+
+    private func onScreenCGFramesByWindowID() -> [CGWindowID: CGRect] {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        var frames: [CGWindowID: CGRect] = [:]
+        frames.reserveCapacity(list.count)
+        for info in list {
+            guard let wid = info[kCGWindowNumber as String] as? CGWindowID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = bounds["X"], let y = bounds["Y"],
+                  let w = bounds["Width"], let h = bounds["Height"] else { continue }
+            frames[wid] = CGRect(x: x, y: y, width: w, height: h)
+        }
+        return frames
+    }
+
     /// Set window frame using a pre-cached AXUIElement reference
     /// Use this when moving multiple windows to avoid position matching issues.
     /// - Parameters:

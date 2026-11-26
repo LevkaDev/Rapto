@@ -146,48 +146,86 @@ extension AppState {
         return true
     }
 
+    /// Which source Manual mode uses when entered on a screen.
+    nonisolated enum ManualModeRestoreSource: Equatable, Sendable {
+        case inheritAutoTiling
+        case restoreManualSnapshot
+        case restoreSavedLayout
+        case applyTemplate
+    }
+
+    /// Pure decision rule for entering Manual mode:
+    /// an active Auto-tiling grid is inherited in place (zero window moves) before falling back
+    /// to a kept Manual snapshot (when returning from None / Drag-to-Snap) or a saved layout.
+    nonisolated static func manualModeRestoreSource(
+        hasActiveAutoTiling: Bool,
+        hasManualSnapshot: Bool,
+        hasSavedLayout: Bool
+    ) -> ManualModeRestoreSource {
+        if hasActiveAutoTiling { return .inheritAutoTiling }
+        if hasManualSnapshot { return .restoreManualSnapshot }
+        if hasSavedLayout { return .restoreSavedLayout }
+        return .applyTemplate
+    }
+
     private func putWindowsBack(_ snapshot: ManualLayoutSnapshot, template: GridTemplate, screen: NSScreen, screenID: String, spaceID: String) -> Bool {
         let windowsOnScreen = filterWindowsOnScreen(windowManager.enumerateWindows(), screen: screen)
         guard layoutManager.restoreManualLayout(snapshot, template: template, currentWindows: windowsOnScreen, forScreenID: screenID) else {
             return false
         }
 
-        let state = layoutManager.state(forScreenID: screenID)
-        for slot in state.slots {
-            for window in slot.windows.reversed() {
-                _ = accessibilityService.setWindowPositionAndSize(window, position: slot.frame.origin, size: slot.frame.size)
-            }
-        }
-        for slot in state.slots.reversed() {
-            if let front = slot.primaryWindow {
-                _ = accessibilityService.raiseWindow(front)
-            }
-        }
-        layoutManager.saveLayoutInfo(forSpaceID: spaceID, screenID: screenID)
+        // Assign any unassigned windows BEFORE moving so every window moves in one quiet batch
+        let initialState = layoutManager.state(forScreenID: screenID)
+        processUnassignedWindowsAfterRestore(
+            allWindowsOnScreen: windowsOnScreen,
+            restoredWindows: initialState.slots.flatMap(\.windows),
+            forScreenID: screenID,
+            repositionMoved: false
+        )
 
-        windowResizeService?.setManagedLayout(windows: state.allWindows)
+        let finalState = layoutManager.state(forScreenID: screenID)
+        let allSlotWindows = finalState.slots.flatMap(\.windows)
+        let axCache = accessibilityService.batchGetAXWindows(for: allSlotWindows)
+
+        var batchTargets: [AccessibilityService.BatchFrameTarget] = []
+        batchTargets.reserveCapacity(allSlotWindows.count)
+        for slot in finalState.slots {
+            for window in slot.windows.reversed() {
+                batchTargets.append(
+                    AccessibilityService.BatchFrameTarget(
+                        window: window,
+                        axWindow: axCache[window.windowID],
+                        frame: slot.frame
+                    )
+                )
+            }
+        }
+
+        var startedTransition = false
+        _ = accessibilityService.batchSetWindowFrames(batchTargets) { [weak self] in
+            startedTransition = true
+            self?.windowHighlightService?.beginLayoutTransition()
+            self?.groupIndicatorManager?.hideAll()
+        }
+
+        // Only grouped slots need their front window raised; use silent AXRaiseAction so background
+        // apps never flash the menu bar or steal keyboard focus from the active window.
+        for slot in finalState.slots where slot.windows.count >= 2 {
+            if let front = slot.primaryWindow, let axWin = axCache[front.windowID] {
+                _ = accessibilityService.raiseWindow(axWindow: axWin)
+            }
+        }
+
+        layoutManager.saveLayoutInfo(forSpaceID: spaceID, screenID: screenID)
+        windowResizeService?.setManagedLayout(windows: finalState.allWindows)
         if isGroupingEnabled && autoGroupSameApp {
             setupManualModeGroupingObservers()
         }
         setupSwapHotkeys()
-        // `allWindows` holds only the front window of each slot; grouped windows are restored too
-        let restoredIDs = Set(state.slots.flatMap(\.windows).map(\.windowID))
-        processUnassignedWindowsAfterRestore(
-            allWindowsOnScreen: windowsOnScreen,
-            restoredWindows: state.slots.flatMap(\.windows),
-            forScreenID: screenID
-        )
-
-        // Windows opened meanwhile joined a slot where they sit, but still have their old frame
-        for slot in layoutManager.state(forScreenID: screenID).slots {
-            for window in slot.windows where !restoredIDs.contains(window.windowID) {
-                _ = accessibilityService.setWindowPositionAndSize(window, position: slot.frame.origin, size: slot.frame.size)
-                _ = accessibilityService.raiseWindow(window)
-                layoutManager.setActiveWindow(window.windowID, in: slot.index, forScreenID: screenID)
-                debugLog("AppState", "Put new window \(window.windowID) into slot \(slot.index)")
-            }
-        }
         groupIndicatorManager?.updateIndicators()
+        if startedTransition {
+            windowHighlightService?.endLayoutTransition()
+        }
         return true
     }
 
@@ -254,19 +292,12 @@ extension AppState {
             let currentSpaceID = spaceID(for: screen)
             debugLog("AppState", " handleModeChange Manual: screen=\(screenID), spaceID=\(currentSpaceID)")
             
-            if bringBackManualLayout(for: screen, screenID: screenID, spaceID: currentSpaceID) {
-                logger.info("Manual mode for screen \(screenName): brought back the earlier Manual layout")
-                updateHighlightForCurrentMode()
-                return
-            }
-
-            // PRIORITY 1: If switching from Auto-tiling, inherit its layout directly
-            // This preserves the current window arrangement without loading old saved layout
+            // PRIORITY 1: If switching from Auto-tiling, inherit its live grid right where the
+            // windows already sit (zero window moves) instead of yanking them back to an older snapshot.
             if let autoState = previousAutoTilingState, autoState.isActive, let template = autoState.template {
                 debugLog("AppState", " Inheriting Auto-tiling layout: \(template.name) with \(autoState.slots.count) slots")
-                
+                layoutManager.removeManualLayout(forSpaceID: currentSpaceID, screenID: screenID)
                 layoutManager.setLayoutWithSlots(template: template, slots: autoState.slots, forScreenID: screenID)
-                
                 layoutManager.saveLayoutInfo(forSpaceID: currentSpaceID, screenID: screenID)
                 
                 let managedWindows = layoutManager.state(forScreenID: screenID).allWindows
@@ -281,6 +312,13 @@ extension AppState {
                 groupIndicatorManager?.updateIndicators()
                 
                 logger.info("Manual mode for screen \(screenName): inherited Auto-tiling layout (\(template.name)), swap=ON, resize=ON, snapBack=\(self.snapBackEnabled)")
+                updateHighlightForCurrentMode()
+                return
+            }
+
+            // PRIORITY 2: Returning from None or Drag-to-Snap restores the kept Manual snapshot
+            if bringBackManualLayout(for: screen, screenID: screenID, spaceID: currentSpaceID) {
+                logger.info("Manual mode for screen \(screenName): brought back the earlier Manual layout")
                 updateHighlightForCurrentMode()
                 return
             }
@@ -501,14 +539,14 @@ extension AppState {
         
         var newSlots: [Slot] = []
         var allAssignedWindows: [WindowInfo] = []
-        
+
         for (index, zone) in sortedZones.enumerated() {
             let absoluteFrame = screenManager.calculateAbsoluteFrame(
                 relativeFrame: zone.relativeFrame,
                 in: screenFrame
             )
             let cgFrame = screenManager.convertToCGCoordinates(frame: absoluteFrame, for: screen)
-            
+
             let slot = Slot(
                 id: zone.id,
                 index: index,
@@ -516,32 +554,39 @@ extension AppState {
                 windows: slotWindowAssignments[index]
             )
             newSlots.append(slot)
-            
-            // Position windows in this slot. setWindowFrame looks up the AX window once per window,
-            // which matters for apps such as Xcode that expose several AX windows.
-            if !slot.isEmpty {
-                if let primaryWindow = slot.primaryWindow {
-                    _ = accessibilityService.setWindowFrame(primaryWindow, frame: cgFrame)
-                    allAssignedWindows.append(primaryWindow)
-                    logger.debug("Positioned '\(primaryWindow.title)' in zone \(index + 1)")
-                }
-                
-                for secondaryWindow in slot.secondaryWindows {
-                    _ = accessibilityService.setWindowFrame(secondaryWindow, frame: cgFrame)
-                    allAssignedWindows.append(secondaryWindow)
-                    logger.debug("Positioned grouped window '\(secondaryWindow.title)' in zone \(index + 1)")
-                }
+            allAssignedWindows.append(contentsOf: slot.windows)
+        }
+
+        let axCache = accessibilityService.batchGetAXWindows(for: allAssignedWindows)
+        var batchTargets: [AccessibilityService.BatchFrameTarget] = []
+        batchTargets.reserveCapacity(allAssignedWindows.count)
+        for slot in newSlots where !slot.isEmpty {
+            for window in slot.windows.reversed() {
+                batchTargets.append(
+                    AccessibilityService.BatchFrameTarget(
+                        window: window,
+                        axWindow: axCache[window.windowID],
+                        frame: slot.frame
+                    )
+                )
             }
         }
-        
-        for slot in newSlots.reversed() {
-            // First raise secondary windows (they go behind)
-            for window in slot.secondaryWindows.reversed() {
-                accessibilityService.raiseWindow(window)
+
+        var startedTransition = false
+        _ = accessibilityService.batchSetWindowFrames(batchTargets) { [weak self] in
+            startedTransition = true
+            self?.windowHighlightService?.beginLayoutTransition()
+            self?.groupIndicatorManager?.hideAll()
+        }
+
+        // Only grouped slots need their primary window raised; silent AXRaiseAction keeps focus intact.
+        for slot in newSlots where slot.windows.count >= 2 {
+            if let primary = slot.primaryWindow, let axWin = axCache[primary.windowID] {
+                _ = accessibilityService.raiseWindow(axWindow: axWin)
             }
-            if let primary = slot.primaryWindow {
-                accessibilityService.raiseWindow(primary)
-            }
+        }
+        if startedTransition {
+            windowHighlightService?.endLayoutTransition()
         }
         
         layoutManager.setLayoutWithSlots(template: template, slots: newSlots, forScreenID: screenID)

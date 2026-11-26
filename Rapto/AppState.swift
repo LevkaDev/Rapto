@@ -1073,6 +1073,13 @@ class AppState: ObservableObject {
         self.autoTilingService?.getMaxWindowsForScreen = { [weak self] screenID in
             self?.autoTilingMaxWindows(forScreenID: screenID)
         }
+        self.autoTilingService?.onLayoutTransition = { [weak self] inTransition in
+            if inTransition {
+                self?.windowHighlightService?.beginLayoutTransition()
+            } else {
+                self?.windowHighlightService?.endLayoutTransition()
+            }
+        }
         
         self.dragSnapService?.layoutZones = { [weak self] screen in
             self?.dragSnapTemplate(for: screen)?.zones.map(\.relativeFrame) ?? []

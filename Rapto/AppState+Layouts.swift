@@ -149,27 +149,47 @@ extension AppState {
             originalFrames.append(cgFrame)
         }
         
-        var restoredCount = 0
+        let allWindowsToRestore = layoutStateToRestore.slots.enumerated().flatMap { slotIndex, slot in
+            slotIndex < originalFrames.count ? slot.windows : []
+        }
+        let axCache = accessibilityService.batchGetAXWindows(for: allWindowsToRestore)
+        var batchTargets: [AccessibilityService.BatchFrameTarget] = []
+        batchTargets.reserveCapacity(allWindowsToRestore.count)
+
         for (slotIndex, slot) in layoutStateToRestore.slots.enumerated() {
             guard slotIndex < originalFrames.count else { continue }
             let originalFrame = originalFrames[slotIndex]
-            
+
             layoutManager.updateSlotFrame(slotIndex, frame: originalFrame, forScreenID: screenID)
-            
-            // Use setWindowFrame to find AXWindow once per window
-            for window in slot.windows {
-                let success = accessibilityService.setWindowFrame(window, frame: originalFrame)
-                
-                if success {
-                    restoredCount += 1
-                    debugLog("AppState", " Restored '\(window.title)' to zone \(slotIndex + 1) at \(originalFrame)")
-                } else {
-                    debugLog("AppState", " Failed to restore '\(window.title)'")
-                }
+
+            for window in slot.windows.reversed() {
+                batchTargets.append(
+                    AccessibilityService.BatchFrameTarget(
+                        window: window,
+                        axWindow: axCache[window.windowID],
+                        frame: originalFrame
+                    )
+                )
             }
         }
-        
+
+        var startedTransition = false
+        let results = accessibilityService.batchSetWindowFrames(batchTargets) { [weak self] in
+            startedTransition = true
+            self?.windowHighlightService?.beginLayoutTransition()
+            self?.groupIndicatorManager?.hideAll()
+        }
+        for slot in layoutStateToRestore.slots where slot.windows.count >= 2 {
+            if let primary = slot.primaryWindow, let axWin = axCache[primary.windowID] {
+                _ = accessibilityService.raiseWindow(axWindow: axWin)
+            }
+        }
+        let restoredCount = results.values.filter { $0 }.count
+
         groupIndicatorManager?.updateIndicators()
+        if startedTransition {
+            windowHighlightService?.endLayoutTransition()
+        }
         
         let updatedScreenState = layoutManager.state(forScreenID: screenID)
         let managedIDs = updatedScreenState.managedWindowIDs

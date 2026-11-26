@@ -797,15 +797,69 @@ extension AppState {
         }
     }
 
+    /// Decides which slot each unassigned window takes after a Manual layout is restored:
+    /// - Pass 1: windows already sitting over an empty slot keep that slot without moving.
+    /// - Pass 2: remaining windows sitting over an occupied slot take the first remaining empty
+    ///   slot instead of piling into a group while another slot sits empty; when no slot is empty,
+    ///   they join the slot they sit over. Windows over no slot return `nil` for `tryAutoGroupWindow`.
+    nonisolated static func unassignedRestoreSlots(
+        containingSlots: [Int?],
+        initialWindowCounts: [Int]
+    ) -> [Int?] {
+        var counts = initialWindowCounts
+        var assignments = Array<Int?>(repeating: nil, count: containingSlots.count)
+        var remainingIndices: [Int] = []
+
+        for (index, containing) in containingSlots.enumerated() {
+            if let slot = containing, counts.indices.contains(slot), counts[slot] == 0 {
+                assignments[index] = slot
+                counts[slot] += 1
+            } else {
+                remainingIndices.append(index)
+            }
+        }
+
+        for index in remainingIndices {
+            guard let containing = containingSlots[index], counts.indices.contains(containing) else {
+                continue
+            }
+            if let empty = counts.firstIndex(of: 0) {
+                assignments[index] = empty
+                counts[empty] += 1
+            } else {
+                assignments[index] = containing
+                counts[containing] += 1
+            }
+        }
+
+        return assignments
+    }
+
     /// Process windows that were not assigned to any slot during layout restoration
-    /// This handles windows that appeared while the user was on a different Space
+    /// This handles windows that appeared while the user was on a different Space or mode
     func processUnassignedWindowsAfterRestore(
         allWindowsOnScreen: [WindowInfo],
         restoredWindows: [WindowInfo],
-        forScreenID screenID: String
+        forScreenID screenID: String,
+        repositionMoved: Bool = true
     ) {
-        let restoredWindowIDs = Set(restoredWindows.map { $0.windowID })
-        let unassignedWindows = allWindowsOnScreen.filter { !restoredWindowIDs.contains($0.windowID) }
+        // Callers using `state.allWindows` only list each slot's front window; include every
+        // window already restored into any slot so restored group members are never reassigned.
+        let currentState = layoutManager.state(forScreenID: screenID)
+        var managedWindowIDs = Set(restoredWindows.map { $0.windowID })
+        for slot in currentState.slots {
+            for window in slot.windows {
+                managedWindowIDs.insert(window.windowID)
+            }
+        }
+        let minSize = WindowClassifier.minimumTilableSize
+        let unassignedWindows = allWindowsOnScreen.filter { window in
+            !managedWindowIDs.contains(window.windowID) &&
+            !isWindowFloating(windowID: window.windowID) &&
+            window.frame.width >= minSize &&
+            window.frame.height >= minSize &&
+            WindowClassifier.shared.classify(window).decision == .tilable
+        }
         
         guard !unassignedWindows.isEmpty else {
             debugLog("AppState", " No unassigned windows after restore")
@@ -814,12 +868,28 @@ extension AppState {
         
         debugLog("AppState", " Found \(unassignedWindows.count) unassigned windows after restore, processing...")
         
-        for window in unassignedWindows {
+        let containingSlots = unassignedWindows.map { slotContainingWindow($0, forScreenID: screenID) }
+        let targetSlots = AppState.unassignedRestoreSlots(
+            containingSlots: containingSlots,
+            initialWindowCounts: currentState.slots.map { $0.windows.count }
+        )
+
+        for (index, window) in unassignedWindows.enumerated() {
             debugLog("AppState", "   - '\(window.ownerName)' - '\(window.title)'")
-            if let slotIndex = slotContainingWindow(window, forScreenID: screenID) {
-                layoutManager.addWindowToSlot(window, slotIndex: slotIndex, forScreenID: screenID)
-                setupAXObserver(for: window.ownerPID)
-                debugLog("AppState", "   Joined slot \(slotIndex) where it already sits")
+            let containing = containingSlots[index]
+            if let slotIndex = targetSlots[index] {
+                if slotIndex != containing {
+                    layoutManager.assignWindow(window, to: slotIndex, forScreenID: screenID)
+                    if repositionMoved {
+                        positionWindowInZone(window, zoneIndex: slotIndex, forScreenID: screenID)
+                    }
+                    setupAXObserver(for: window.ownerPID)
+                    debugLog("AppState", "   Moved to empty slot \(slotIndex) instead of joining occupied slot \(containing ?? -1)")
+                } else {
+                    layoutManager.addWindowToSlot(window, slotIndex: slotIndex, forScreenID: screenID)
+                    setupAXObserver(for: window.ownerPID)
+                    debugLog("AppState", "   Joined slot \(slotIndex) where it already sits")
+                }
             } else {
                 tryAutoGroupWindow(window, forScreenID: screenID)
             }
@@ -834,7 +904,9 @@ extension AppState {
             windowResizeService?.setManagedLayout(windows: allManagedWindows)
         }
         
-        groupIndicatorManager?.updateIndicators()
+        if repositionMoved {
+            groupIndicatorManager?.updateIndicators()
+        }
     }
     
     /// Lets floating and focus mode drop closed windows, then refreshes the highlight and indicators.

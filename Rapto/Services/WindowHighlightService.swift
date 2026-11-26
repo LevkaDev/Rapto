@@ -89,6 +89,21 @@ class WindowHighlightService: ObservableObject {
 
     /// One log line per resize about what tried to show the border
     private var loggedUpdateDuringResize = false
+
+    /// Nested count of active batch layout transitions; while > 0 (or during the brief post-move settle)
+    /// the border stays hidden so it never flashes or chases intermediate window positions.
+    private var layoutTransitionDepth: Int = 0
+    private var layoutTransitionRestoreTask: Task<Void, Never>?
+    private var fadeInNextShow: Bool = false
+
+    private var isInLayoutTransition: Bool {
+        layoutTransitionDepth > 0 || layoutTransitionRestoreTask != nil
+    }
+
+    /// Fade-in duration for the highlight border after a batch layout transition.
+    nonisolated static func fadeInDuration(reduceMotion: Bool) -> TimeInterval {
+        reduceMotion ? 0.08 : 0.14
+    }
     
     /// Pending verification task (one-shot, not polling)
     /// Used to verify window still exists after suspicious events
@@ -123,6 +138,34 @@ class WindowHighlightService: ObservableObject {
         guard isActive else { return }
         updateHighlight()
     }
+
+    /// Temporarily hides the active-window border while Rapto repositions multiple windows in a batch.
+    func beginLayoutTransition() {
+        layoutTransitionDepth += 1
+        layoutTransitionRestoreTask?.cancel()
+        layoutTransitionRestoreTask = nil
+        if layoutTransitionDepth == 1 {
+            highlightWindow?.orderOut(nil)
+        }
+    }
+
+    /// Ends a batch layout transition and gently fades the border back in once frames settle.
+    func endLayoutTransition() {
+        guard layoutTransitionDepth > 0 else { return }
+        layoutTransitionDepth -= 1
+        guard layoutTransitionDepth == 0 else { return }
+        layoutTransitionRestoreTask?.cancel()
+        layoutTransitionRestoreTask = Task { @MainActor [weak self] in
+            // Let WindowServer commit the batch move before placing the border
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.layoutTransitionRestoreTask = nil
+            guard self.isActive, self.layoutTransitionDepth == 0 else { return }
+            self.fadeInNextShow = true
+            self.updateHighlight()
+            self.fadeInNextShow = false
+        }
+    }
     
     func start() {
         guard !isActive else {
@@ -153,6 +196,10 @@ class WindowHighlightService: ObservableObject {
         stopMouseDragTracking()
         cancelPendingVerification()
         activationFollowUpTask?.cancel()
+        layoutTransitionRestoreTask?.cancel()
+        layoutTransitionRestoreTask = nil
+        layoutTransitionDepth = 0
+        fadeInNextShow = false
         
         // Destroy highlight window completely (it stays on old Space otherwise)
         highlightWindow?.orderOut(nil)
@@ -555,6 +602,7 @@ class WindowHighlightService: ObservableObject {
             ownerName: "",
             frame: frame
         ))
+        highlightWindow?.alphaValue = 1
         highlightWindow?.orderFront(nil)
     }
     
@@ -711,7 +759,8 @@ class WindowHighlightService: ObservableObject {
     /// Verify that the currently highlighted window still exists and is still focused
     /// Called once after suspicious events (including mouse clicks), not continuously
     private func verifyWindowStillExists() {
-        guard let windowID = currentHighlightedWindowID, currentHighlightedPID != 0 else {
+        guard !isInLayoutTransition,
+              let windowID = currentHighlightedWindowID, currentHighlightedPID != 0 else {
             return
         }
         
@@ -888,7 +937,7 @@ class WindowHighlightService: ObservableObject {
     }
     
     private func handleWindowEvent(element: AXUIElement, notification: String) {
-        guard observedPID != 0 else { return }
+        guard observedPID != 0, !isInLayoutTransition else { return }
         
         logger.debug("AX event: \(notification)")
         
@@ -1097,6 +1146,8 @@ class WindowHighlightService: ObservableObject {
     }
     
     private func updateHighlight() {
+        guard !isInLayoutTransition else { return }
+
         // The border is hidden while its window is resized and comes back on mouse up. A check that
         // runs in between (a timer, an AX call that timed out on the busy app) would show it again.
         if hiddenForResize, isDragging, NSEvent.pressedMouseButtons & 1 == 1 {
@@ -1225,8 +1276,26 @@ class WindowHighlightService: ObservableObject {
                 ?? HighlightBorderView.fallbackShape(for: bundleIdentifier)
         }
         
+        let shouldFadeIn = fadeInNextShow
+        fadeInNextShow = false
+
         updateHighlightPosition(for: window, bundleIdentifier: bundleIdentifier)
-        highlightWindow?.orderFront(nil)
+        guard let highlightWindow else { return }
+        if shouldFadeIn {
+            let duration = Self.fadeInDuration(
+                reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            )
+            highlightWindow.alphaValue = 0
+            highlightWindow.orderFront(nil)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = duration
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                highlightWindow.animator().alphaValue = 1
+            }
+        } else {
+            highlightWindow.alphaValue = 1
+            highlightWindow.orderFront(nil)
+        }
     }
     
     // MARK: - Corner Shape Measurement
