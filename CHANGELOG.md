@@ -11,6 +11,13 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- Moving a window to another desktop failed for Yab: the middle of its top strip answers as a
+  plain group of the window, was taken as a confirmed drag area, and the desktop switched without
+  the window. A confirmed spot that does not move the window within the wait is now let go and up
+  to five other spots are probed (`SpaceBarController.tryFallbacks`, `fallbackSpots`,
+  `fallbackOrder(after:candidates:limit:)`); if none drags, the move goes on from the confirmed
+  spot as before. The spots are also looked for only once the window is in front: before, they
+  were answered by the window still covering it.
 - An app whose windows come from a process without a bundle identifier (MetaTrader 5 and other
   apps run through Wine: the windows belong to a `wine` helper inside the app bundle) could not
   be ignored: `Ignored Apps` matches by bundle identifier, the helper has none, and the app was
