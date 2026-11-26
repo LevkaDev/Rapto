@@ -735,6 +735,12 @@ extension AppState {
         return PredefinedTemplates.all + customTemplates
     }
 
+    /// Finds a layout by ID, resolving retired built-in IDs to their active replacement.
+    func template(withID id: UUID) -> GridTemplate? {
+        let canonical = PredefinedTemplates.canonicalID(for: id)
+        return allTemplates.first { $0.id == canonical }
+    }
+
     // MARK: - Removing Standard Layouts From the Lists
     
     static let hiddenStandardTemplatesKey = "hiddenStandardTemplateIDs"

@@ -526,8 +526,7 @@ struct UltrawideTemplateTests {
         PredefinedTemplates.centerWide,
         PredefinedTemplates.centerLeftSplit,
         PredefinedTemplates.centerRightSplit,
-        PredefinedTemplates.columns4,
-        PredefinedTemplates.twoOneTow
+        PredefinedTemplates.columns4
     ])
     func ultrawideTemplatesWithGaps(template: GridTemplate) {
         let screenManager = ScreenManager()

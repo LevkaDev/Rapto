@@ -98,8 +98,8 @@ struct DisplayProfileTests {
     @Test("PredefinedTemplates cleanly separates standard and ultrawide layouts without losing any")
     func predefinedTemplatePartitioning() {
         #expect(PredefinedTemplates.standard.count == 7)
-        #expect(PredefinedTemplates.ultrawide.count == 7)
-        #expect(PredefinedTemplates.all.count == 14)
+        #expect(PredefinedTemplates.ultrawide.count == 6)
+        #expect(PredefinedTemplates.all.count == 13)
         #expect(PredefinedTemplates.ultrawideIDs.contains(PredefinedTemplates.centerFocus.id))
         #expect(!PredefinedTemplates.ultrawideIDs.contains(PredefinedTemplates.halvesVertical.id))
     }

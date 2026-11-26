@@ -31,7 +31,11 @@ struct SpaceConfigurationStorage {
         
         do {
             let entries = try JSONDecoder().decode([String: LossyDecodable<SpaceConfiguration>].self, from: data)
-            let configs = entries.compactMapValues(\.value)
+            let configs = entries.compactMapValues { entry -> SpaceConfiguration? in
+                guard var config = entry.value else { return nil }
+                config.templateID = PredefinedTemplates.canonicalOptionalID(for: config.templateID)
+                return config
+            }
             if configs.count < entries.count {
                 // The next save drops the entries that failed; keep the data as it was
                 store.set(data, forKey: key + "_backup")

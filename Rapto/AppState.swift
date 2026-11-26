@@ -925,7 +925,9 @@ class AppState: ObservableObject {
     /// Standard layouts the user removed from the lists.
     /// They are only left out of menus and pickers: a desktop that already uses one keeps working.
     @Published var hiddenStandardTemplateIDs: Set<UUID> = Set(
-        (UserDefaults.standard.stringArray(forKey: AppState.hiddenStandardTemplatesKey) ?? []).compactMap(UUID.init(uuidString:))
+        (UserDefaults.standard.stringArray(forKey: AppState.hiddenStandardTemplatesKey) ?? [])
+            .compactMap(UUID.init(uuidString:))
+            .filter { $0 != PredefinedTemplates.retiredTwoOneTwoID }
     )
 
     // MARK: - Initialization
@@ -1194,7 +1196,7 @@ class AppState: ObservableObject {
                 continue
             }
             
-            guard let template = allTemplates.first(where: { $0.id == savedInfo.templateID }) else {
+            guard let template = template(withID: savedInfo.templateID) else {
                 debugLog("AppState"," Template not found for screen '\(screenID)': \(savedInfo.templateID)")
                 continue
             }
@@ -1385,7 +1387,7 @@ class AppState: ObservableObject {
         
         if let savedTemplateString = defaults.string(forKey: "defaultTemplateForNewSpaces"),
            let savedTemplateID = UUID(uuidString: savedTemplateString) {
-            defaultTemplateForNewSpaces = savedTemplateID
+            defaultTemplateForNewSpaces = PredefinedTemplates.canonicalID(for: savedTemplateID)
         }
         
         if defaults.object(forKey: "enableFileLogging") != nil {

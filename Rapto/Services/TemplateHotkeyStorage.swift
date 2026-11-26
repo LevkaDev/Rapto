@@ -18,11 +18,40 @@ class TemplateHotkeyStorage {
         
         do {
             let hotkeys = try JSONDecoder().decode([TemplateHotkey].self, from: data)
-            return hotkeys
+            return Self.migratedHotkeys(hotkeys)
         } catch {
             debugLog("TemplateHotkeyStorage", "Failed to decode hotkeys: \(error)")
             return []
         }
+    }
+
+    /// Rewrites shortcuts targeting retired built-in layout IDs to their active replacement,
+    /// without overriding a shortcut already assigned to the replacement layout.
+    static func migratedHotkeys(_ hotkeys: [TemplateHotkey]) -> [TemplateHotkey] {
+        let existingCanonical = Set(
+            hotkeys
+                .filter { PredefinedTemplates.canonicalID(for: $0.templateID) == $0.templateID }
+                .map(\.templateID)
+        )
+        var seen = Set<UUID>()
+        var result: [TemplateHotkey] = []
+        for hotkey in hotkeys {
+            let canonical = PredefinedTemplates.canonicalID(for: hotkey.templateID)
+            if canonical == hotkey.templateID {
+                if seen.insert(canonical).inserted {
+                    result.append(hotkey)
+                }
+            } else if !existingCanonical.contains(canonical), seen.insert(canonical).inserted {
+                let replacementName = PredefinedTemplates.all.first(where: { $0.id == canonical })?.name ?? hotkey.templateName
+                result.append(TemplateHotkey(
+                    templateID: canonical,
+                    templateName: replacementName,
+                    keyCode: hotkey.keyCode,
+                    modifiers: hotkey.modifiers
+                ))
+            }
+        }
+        return result
     }
     
     func saveHotkeys(_ hotkeys: [TemplateHotkey]) {

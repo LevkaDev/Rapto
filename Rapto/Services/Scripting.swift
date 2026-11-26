@@ -130,7 +130,7 @@ enum Scripting {
     static func applyLayout(id: String) -> Bool {
         guard let appState,
               let uuid = UUID(uuidString: id),
-              let template = appState.allTemplates.first(where: { $0.id == uuid }) else { return false }
+              let template = appState.template(withID: uuid) else { return false }
         let screen = appState.screenManager.activeScreen()
         switch appState.mode(for: screen) {
         case .manualAssignment:

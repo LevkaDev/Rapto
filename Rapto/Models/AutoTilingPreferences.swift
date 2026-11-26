@@ -166,6 +166,15 @@ enum AutoTilingPreferencesStorage {
         if preferences.templateFor8Windows == nil {
             preferences.templateFor8Windows = defaults.templateFor8Windows
         }
+
+        preferences.templateFor1Window = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor1Window)
+        preferences.templateFor2Windows = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor2Windows)
+        preferences.templateFor3Windows = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor3Windows)
+        preferences.templateFor4Windows = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor4Windows)
+        preferences.templateFor5Windows = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor5Windows)
+        preferences.templateFor6Windows = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor6Windows)
+        preferences.templateFor7Windows = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor7Windows)
+        preferences.templateFor8Windows = PredefinedTemplates.canonicalOptionalID(for: preferences.templateFor8Windows)
         
         // An imported or hand-edited file can hold any number; Settings builds a list from it
         let range = AutoTilingPreferences.maxWindowsRange
