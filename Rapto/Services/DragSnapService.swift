@@ -87,6 +87,9 @@ class DragSnapService: ObservableObject {
     
     /// Zones (relative frames) of the layout chosen for the desktop on this screen; empty for the standard zones
     var layoutZones: ((NSScreen) -> [CGRect])?
+
+    /// Custom layouts (each an array of relative zone frames) pinned to the top Drag to Snap bar
+    var pickerCustomLayouts: (() -> [[CGRect]])?
     
     private var activeScreens: Set<String> = []
     
@@ -567,7 +570,8 @@ class DragSnapService: ObservableObject {
             zonesWindow?.hide()
             let showsPickerCaption = showsHints &&
                 !(UserDefaults.standard.stringArray(forKey: "shownHints") ?? []).contains(DragSnapLayoutPicker.pickerHintID)
-            layoutPicker.show(in: screenManager.visibleFrame(for: screen), showsCaption: showsPickerCaption)
+            let extraLayouts = pickerCustomLayouts?() ?? []
+            layoutPicker.show(in: screenManager.visibleFrame(for: screen), extraLayouts: extraLayouts, showsCaption: showsPickerCaption)
             if layoutPicker.contains(mousePosition) {
                 newZone = layoutPicker.pick(at: mousePosition).map {
                     SnapZone(edge: .pickerZone(layout: $0.layout, zone: $0.zone), resultFrame: $0.relativeFrame)

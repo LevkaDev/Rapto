@@ -3,6 +3,7 @@
 ## Version 6.3
 
 ### Improvements
+- Custom layouts can now be pinned to the top Drag to Snap layout bar from Settings → Behavior or by right-clicking a custom layout in the Layout Overlay.
 - Faster, smoother window arrangements, swaps, and mode switches, with less visual flicker.
 - Faster and more reliable moving of windows between desktops from the Desktops Bar or by shortcut.
 

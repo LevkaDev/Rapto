@@ -58,6 +58,10 @@ struct OverlayView: View {
                         appState.renameCustomTemplate(template, newName: newName)
                     },
                     customTemplateIDs: Set(appState.customTemplates.map { $0.id }),
+                    dragSnapPickerTemplateIDs: appState.dragSnapPickerTemplateIDs,
+                    onToggleDragSnapPicker: { template in
+                        appState.toggleInDragSnapPicker(template)
+                    },
                     onHideStandard: { template in
                         appState.hideStandardTemplate(template)
                     },

@@ -710,6 +710,9 @@ extension AppState {
         if hotkey(for: template) != nil {
             removeHotkey(from: template)
         }
+        if dragSnapPickerTemplateIDs.remove(template.id) != nil {
+            saveDragSnapPickerTemplates()
+        }
         logger.info("Deleted custom template '\(template.name)'")
     }
     
@@ -775,6 +778,38 @@ extension AppState {
     private func saveHiddenStandardTemplates() {
         UserDefaults.standard.set(hiddenStandardTemplateIDs.map(\.uuidString), forKey: Self.hiddenStandardTemplatesKey)
         logger.info("Standard layouts removed from the lists: \(self.hiddenStandardTemplateIDs.count)")
+    }
+
+    // MARK: - Pinning Custom Layouts to the Drag to Snap Top Bar
+
+    nonisolated static let dragSnapPickerTemplatesKey = "dragSnapPickerTemplateIDs"
+
+    /// Custom layouts pinned to the top Drag to Snap layout bar, in the user's custom layout order.
+    var dragSnapPickerCustomLayouts: [GridTemplate] {
+        customTemplates.filter { dragSnapPickerTemplateIDs.contains($0.id) }
+    }
+
+    func isInDragSnapPicker(_ template: GridTemplate) -> Bool {
+        dragSnapPickerTemplateIDs.contains(template.id)
+    }
+
+    func setInDragSnapPicker(_ included: Bool, for template: GridTemplate) {
+        if included {
+            guard customTemplates.contains(where: { $0.id == template.id }) else { return }
+            dragSnapPickerTemplateIDs.insert(template.id)
+        } else {
+            dragSnapPickerTemplateIDs.remove(template.id)
+        }
+        saveDragSnapPickerTemplates()
+    }
+
+    func toggleInDragSnapPicker(_ template: GridTemplate) {
+        setInDragSnapPicker(!isInDragSnapPicker(template), for: template)
+    }
+
+    private func saveDragSnapPickerTemplates() {
+        UserDefaults.standard.set(dragSnapPickerTemplateIDs.map(\.uuidString).sorted(), forKey: Self.dragSnapPickerTemplatesKey)
+        logger.info("Custom layouts pinned to Drag to Snap bar: \(self.dragSnapPickerTemplateIDs.count)")
     }
 
     // MARK: - Layout from Windows

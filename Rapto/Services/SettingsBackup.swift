@@ -43,7 +43,7 @@ enum SettingsBackup {
         // Apps
         "ignoredApps", "passthroughApps",
         // Layouts
-        "hiddenStandardTemplateIDs",
+        "hiddenStandardTemplateIDs", "dragSnapPickerTemplateIDs",
         // Tied to this Mac's displays and desktops. On another Mac they match nothing
         // and the defaults for new desktops apply.
         "screenConfigurations_v1", "workspaces.v1"

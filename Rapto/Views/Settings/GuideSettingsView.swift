@@ -139,7 +139,7 @@ struct GuideSettingsView: View {
                 StarterProfileCard(
                     mode: .dragSnap,
                     tagline: "Free windows, snap on demand",
-                    description: "Windows stay free until you drag them — snap to screen edges & corners, the top layout bar, or a layout chosen for that desktop (right-click desktop → Layout). Drop into an occupied zone to group; hold ⌥ Option to move freely.",
+                    description: "Windows stay free until you drag them — snap to screen edges & corners, the top layout bar (pin your own layouts in Settings → Behavior), or a layout chosen for that desktop (right-click desktop → Layout). Drop into an occupied zone to group; hold ⌥ Option to move freely.",
                     defaultsSummary: "Applies Drag to Snap + 4 px gaps + hides active border on snapped windows",
                     isActiveProfile: isProfileActive(.dragSnap),
                     onApply: { appState.applyStarterProfile(.dragSnap) }

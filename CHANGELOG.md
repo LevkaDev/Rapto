@@ -48,6 +48,11 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
   joining occupied ones.
 
 ### Changed
+- **Custom layouts in the Drag to Snap top bar** (`DragSnapLayoutPicker`, `DragSnapService`,
+  `AppState+Layouts`, `BehaviorSettingsView`, `GridTemplatePicker`, `SettingsBackup`): users can
+  now opt individual custom layouts into the top Drag to Snap layout picker (`dragSnapPickerTemplateIDs`)
+  from Settings → Behavior or the Layout Overlay context menu; the picker separates custom layouts
+  with a divider and wraps onto additional rows when needed so it stays inside the screen.
 - **Simultaneous parallel window swaps** (`WindowSwapService`, `AppState+Hotkeys`): mouse
   drag-drop swaps and keyboard slot swaps now move both windows concurrently via
   `AccessibilityService.batchSetWindowFrames` with a calm highlight border fade-in instead of
