@@ -124,6 +124,49 @@ struct InteractiveTourTests {
         #expect(withoutShortcut.contains("Open Window Flow"))
     }
 
+    @Test("Fresh install activates Drag to Snap, Manual, or Auto-tiling even if defaultModeForNewSpaces already matches")
+    func freshInstallModeActivationRule() {
+        // Fresh desktop has no explicit ScreenConfiguration entry and service is not running yet,
+        // even when effectiveMode already reports the target via defaultModeForNewSpaces.
+        #expect(AppState.needsModeActivation(
+            targetMode: .dragSnap,
+            effectiveMode: .dragSnap,
+            hasExplicitConfig: false,
+            isServiceRunning: false
+        ) == true)
+
+        #expect(AppState.needsModeActivation(
+            targetMode: .autoTiling,
+            effectiveMode: .autoTiling,
+            hasExplicitConfig: false,
+            isServiceRunning: false
+        ) == true)
+
+        // Explicit config exists, but service stopped (e.g. before Accessibility was granted)
+        #expect(AppState.needsModeActivation(
+            targetMode: .dragSnap,
+            effectiveMode: .dragSnap,
+            hasExplicitConfig: true,
+            isServiceRunning: false
+        ) == true)
+
+        // Already explicitly active with its service running: leave existing slots alone
+        #expect(AppState.needsModeActivation(
+            targetMode: .manualAssignment,
+            effectiveMode: .manualAssignment,
+            hasExplicitConfig: true,
+            isServiceRunning: true
+        ) == false)
+
+        // Switching to a different mode always activates
+        #expect(AppState.needsModeActivation(
+            targetMode: .dragSnap,
+            effectiveMode: .manualAssignment,
+            hasExplicitConfig: true,
+            isServiceRunning: true
+        ) == true)
+    }
+
     @Test("DisplayProfile auto-tune summary adapts to display count and desktop count")
     func autoTuneSummaryFormatting() {
         #expect(DisplayProfile.compactLaptop.autoTuneSummary(screenCount: 1, desktopCount: 1) == "Compact laptop · tuned for 1–2 windows")

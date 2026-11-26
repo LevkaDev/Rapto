@@ -166,11 +166,12 @@ struct OnboardingView: View {
                 mode: chosenMode,
                 didArrange: $didArrangeDuringOnboarding,
                 onArrange: {
-                    applyModePreferences()
+                    applyAutoTilingPreferencesIfNeeded()
                     let arranged = appState.arrangeWindowsForFirstRun(mode: chosenMode)
                     if arranged {
                         didUndoArrange = false
                     }
+                    appState.defaultModeForNewSpaces = chosenMode
                     return arranged
                 },
                 onUndo: {
@@ -278,21 +279,23 @@ struct OnboardingView: View {
     }
 
     private func finishOnboardingWithoutTour() {
-        applyModePreferences()
+        applyAutoTilingPreferencesIfNeeded()
         if !didArrangeDuringOnboarding && !didUndoArrange {
             applyChosenModeToAllScreens()
         }
+        appState.defaultModeForNewSpaces = chosenMode
         onComplete()
     }
 
     private func startShortTour() {
-        applyModePreferences()
+        applyAutoTilingPreferencesIfNeeded()
         // For Drag to Snap, activate immediately (it never moves existing windows).
         // For Manual / Auto-tiling, if the user didn't click Arrange Now yet, the tour's own
         // first task ("Arrange your open windows") activates it on demand with Undo support.
         if chosenMode == .dragSnap || didArrangeDuringOnboarding {
             applyChosenModeToAllScreens()
         }
+        appState.defaultModeForNewSpaces = chosenMode
         if let onStartTour {
             onStartTour(chosenMode, didArrangeDuringOnboarding)
         } else {
@@ -319,8 +322,8 @@ struct OnboardingView: View {
 
     // MARK: - Mode
 
-    /// Saves the chosen mode defaults and Auto-tiling limits without moving windows on screen yet.
-    private func applyModePreferences() {
+    /// Saves Auto-tiling limits without mutating `defaultModeForNewSpaces` before screens are activated.
+    private func applyAutoTilingPreferencesIfNeeded() {
         let mode = chosenMode
         if mode == .autoTiling {
             let dominant = DisplayProfile.dominant(for: appState.screenManager.allScreens())
@@ -335,15 +338,14 @@ struct OnboardingView: View {
             }
             appState.applyPerScreenAutoTilingOverrides(dominantMaxWindows: autoTilingMaxWindows)
         }
-        appState.defaultModeForNewSpaces = mode
         debugLog("Onboarding", "Chose mode \(mode.rawValue)")
     }
 
-    /// Turns the chosen mode on across connected screens that aren't already in it.
+    /// Ensures the chosen mode is explicitly configured and its service is running on every screen.
     private func applyChosenModeToAllScreens() {
         let mode = chosenMode
-        for screen in appState.screenManager.allScreens() where appState.mode(for: screen) != mode {
-            appState.setMode(mode, for: screen)
+        for screen in appState.screenManager.allScreens() {
+            appState.ensureModeActive(mode, on: screen)
         }
     }
 
@@ -357,8 +359,11 @@ struct OnboardingView: View {
         let hadAccessibility = hasAccessibilityPermission
         hasAccessibilityPermission = AXIsProcessTrusted()
 
-        if !hadAccessibility && hasAccessibilityPermission && currentStep == .welcomePermissions {
-            NSApp.activate()
+        if !hadAccessibility && hasAccessibilityPermission {
+            appState.refreshAccessibilityPermission()
+            if currentStep == .welcomePermissions {
+                NSApp.activate()
+            }
         }
     }
 

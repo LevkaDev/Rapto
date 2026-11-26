@@ -106,23 +106,19 @@ extension AppState {
         let effectiveMode: TilingMode = (mode == .none) ? .dragSnap : mode
         switch effectiveMode {
         case .autoTiling:
-            if self.mode(for: screen) != .autoTiling {
-                setMode(.autoTiling, for: screen)
-            } else {
+            if autoTilingService?.isActive(forScreenID: screenID) == true, self.mode(for: screen) == .autoTiling {
                 autoTilingService?.redistributeNow(forScreenID: screenID)
+            } else {
+                setMode(.autoTiling, for: screen)
             }
         case .manualAssignment:
-            if self.mode(for: screen) != .manualAssignment {
-                setMode(.manualAssignment, for: screen)
-            }
+            ensureModeActive(.manualAssignment, on: screen)
             if !layoutManager.state(forScreenID: screenID).isActive {
                 let template = DisplayProfile.forScreen(screen).suggestedManualTemplate
                 applyTemplateToScreen(template: template, screen: screen)
             }
         case .dragSnap, .none:
-            if self.mode(for: screen) != .dragSnap {
-                setMode(.dragSnap, for: screen)
-            }
+            ensureModeActive(.dragSnap, on: screen)
             let profile = DisplayProfile.forScreen(screen)
             let template: GridTemplate = windows.count == 1
                 ? PredefinedTemplates.full
@@ -280,10 +276,10 @@ extension AppState {
             break
         }
 
-        defaultModeForNewSpaces = mode
-        for screen in screenManager.allScreens() where self.mode(for: screen) != mode {
-            setMode(mode, for: screen)
+        for screen in screenManager.allScreens() {
+            ensureModeActive(mode, on: screen)
         }
+        defaultModeForNewSpaces = mode
         updateHighlightForCurrentMode()
         debugLog("AppState", " Applied starter profile: \(mode.rawValue)")
     }

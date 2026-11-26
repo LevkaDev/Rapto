@@ -137,6 +137,53 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Pure rule deciding whether `setMode(targetMode, for: screen)` must run to activate a mode.
+    /// Checking `effectiveMode != targetMode` alone fails on a fresh install: setting
+    /// `defaultModeForNewSpaces = targetMode` makes `effectiveMode` return `targetMode` via
+    /// `ScreenConfiguration.userDefault` even though no service was ever started on the desktop.
+    nonisolated static func needsModeActivation(
+        targetMode: TilingMode,
+        effectiveMode: TilingMode,
+        hasExplicitConfig: Bool,
+        isServiceRunning: Bool
+    ) -> Bool {
+        if effectiveMode != targetMode { return true }
+        guard targetMode != .none else { return false }
+        return !hasExplicitConfig || !isServiceRunning
+    }
+
+    /// Ensures `mode` is explicitly stored for `screen`'s current desktop and its service is running,
+    /// without clearing an existing layout when the mode is already explicitly active.
+    func ensureModeActive(_ mode: TilingMode, on screen: NSScreen) {
+        let screenID = screenManager.identifier(for: screen)
+        let screenSpaceID = spaceID(for: screen)
+        let key = ConfigurationKey.make(spaceID: screenSpaceID, screenID: screenID)
+        let hasExplicitConfig = screenConfigurations[key] != nil
+        let effectiveMode = self.mode(for: screen)
+        let serviceRunning: Bool
+        switch mode {
+        case .dragSnap:
+            serviceRunning = dragSnapService?.isActive(forScreenID: screenID) == true
+        case .autoTiling:
+            serviceRunning = autoTilingService?.isActive(forScreenID: screenID) == true
+        case .manualAssignment:
+            serviceRunning = hasExplicitConfig
+                && effectiveMode == .manualAssignment
+                && (windowSwapService?.isActive == true)
+        case .none:
+            serviceRunning = true
+        }
+
+        if Self.needsModeActivation(
+            targetMode: mode,
+            effectiveMode: effectiveMode,
+            hasExplicitConfig: hasExplicitConfig,
+            isServiceRunning: serviceRunning
+        ) {
+            setMode(mode, for: screen)
+        }
+    }
+
     /// Switch a screen to Manual around the layout just placed on it, without tiling its windows again
     func enterManualKeepingLayout(on screen: NSScreen) {
         let screenID = screenManager.identifier(for: screen)
