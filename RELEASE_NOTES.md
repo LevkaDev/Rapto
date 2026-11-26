@@ -6,7 +6,7 @@
 - 
 
 ### Improvements
-- 
+- Moving windows between desktops from the Desktops Bar or by shortcut is now faster and more reliable across browsers, Electron apps, and windows without standard title-bar buttons.
 
 ### Fixes
 - 
