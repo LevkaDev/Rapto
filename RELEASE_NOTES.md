@@ -10,6 +10,8 @@
 - Layout changes and mode switches now move windows together in one calm step instead of one by one, keep your current active window focused, and gently fade the active-window border back in once windows settle.
 
 ### Fixes
+- Moving a background app that was asleep in App Nap (such as WhatsApp on another desktop) via the Desktops Bar no longer times out and aborts the move.
+- Moving a window to a Manual desktop where every slot is occupied now keeps it in the slot matching its current size and position instead of pulling it into an older occupied slot from a previous session.
 - Switching from Auto-tiling to Manual mode now keeps your windows right where they are instead of reshuffling them back to an earlier Manual snapshot.
 - Restoring a Manual layout now places newly opened windows into empty slots first instead of stacking them onto an occupied slot while another slot sits empty, and no longer steals focus to background apps.
 

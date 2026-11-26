@@ -413,6 +413,18 @@ class WindowHighlightService: ObservableObject {
             }
         }
         windowObservers.append(missionControlCloseObserver)
+
+        let spaceBarMoveEndObserver = NotificationCenter.default.addObserver(
+            forName: .spaceBarMoveDidEnd,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isActive else { return }
+                self.updateHighlight()
+            }
+        }
+        windowObservers.append(spaceBarMoveEndObserver)
     }
     
     private func removeFocusObserver() {
@@ -1147,6 +1159,13 @@ class WindowHighlightService: ObservableObject {
     
     private func updateHighlight() {
         guard !isInLayoutTransition else { return }
+
+        // Stand down while the Desktops Bar carries a window between Spaces so WindowClassifier
+        // never blocks the main thread on an App-Napped app mid-move.
+        if SpaceBarController.isDrivingMouse {
+            hideHighlight()
+            return
+        }
 
         // The border is hidden while its window is resized and comes back on mouse up. A check that
         // runs in between (a timer, an AX call that timed out on the busy app) would show it again.
