@@ -226,6 +226,8 @@ final class SpaceBarController: ObservableObject {
 
     /// Builds the right-click menu for a desktop (and optional clicked app glyph) on a display.
     var menuBuilder: ((SpaceBarSpace, SpaceBarGlyph?, String) -> NSMenu?)?
+    /// Fired when the user hovers the notch / top hover zone and reveals a hidden Desktops Bar.
+    var onUserRevealedHoverBar: (() -> Void)?
     /// Whether a window moved from the pill takes the user along. Option on drop flips it.
     var movesFollowWindow = false
     /// Whether in-action hints (such as the live bar drag label) are shown.
@@ -1970,11 +1972,29 @@ final class SpaceBarController: ObservableObject {
         return CGRect(x: screen.frame.midX - width / 2, y: screen.frame.maxY - menuBar, width: width, height: menuBar + 1)
     }
 
+    /// The notch rectangle in AppKit coordinates when `screen` hides its Desktops Bar
+    /// until the pointer hovers the notch; nil on non-notched screens or when always shown.
+    func notchAnchor(on screen: NSScreen) -> NSRect? {
+        guard isEnabled, hasNotch(screen) else { return nil }
+        let displayID = displayUUID(for: screen)
+        guard !displayID.isEmpty, isHoverOnly(screen, displayID: displayID) else { return nil }
+        let menuBar = max(menuBarHeight(of: screen), screen.safeAreaInsets.top, NSStatusBar.system.thickness)
+        var width: CGFloat = 200
+        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+            width = max(120, screen.frame.width - left.width - right.width)
+        }
+        return NSRect(x: screen.frame.midX - width / 2, y: screen.frame.maxY - menuBar, width: width, height: menuBar)
+    }
+
     private func handlePointer(_ mouse: NSPoint) {
         for (displayID, panel) in panels {
             guard let screen = screensByDisplay[displayID], isHoverOnly(screen, displayID: displayID) else { continue }
             if pointer(mouse, keeps: panel, on: screen, displayID: displayID) {
+                let wasRevealed = revealed.contains(displayID)
                 reveal(displayID)
+                if !wasRevealed && revealed.contains(displayID) {
+                    onUserRevealedHoverBar?()
+                }
             } else if revealed.contains(displayID) {
                 scheduleHide(displayID)
             }

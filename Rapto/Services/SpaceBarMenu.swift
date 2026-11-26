@@ -47,6 +47,16 @@ extension AppState {
             menu.addItem(.separator())
         }
 
+        let pauseItem = SpaceBarMenuItem(title: isPaused ? "Resume Rapto" : "Pause Rapto") { [weak self] in
+            self?.isPaused.toggle()
+        }
+        pauseItem.image = NSImage(
+            systemSymbolName: isPaused ? "play.fill" : "pause.fill",
+            accessibilityDescription: isPaused ? "Resume Rapto" : "Pause Rapto"
+        )
+        menu.addItem(pauseItem)
+        menu.addItem(.separator())
+
         menu.addItem(.sectionHeader(title: "Desktop \(space.number)"))
 
         let modeMenu = NSMenu()

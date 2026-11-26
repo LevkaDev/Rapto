@@ -29,6 +29,9 @@ extension AppState {
         hasCompletedOnboarding = true
         isOnboardingVisible = false
         debugLog("AppState", " Onboarding completed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.showNotchDesktopsBarHintIfNeeded()
+        }
     }
 
     func resetOnboardingForDebug() {
@@ -172,6 +175,40 @@ extension AppState {
                 guard let self, !self.isOnboardingVisible, !self.groupIndicatorsHidden else { return false }
                 return self.layoutManager.state(forScreenID: screenID).slots.contains(where: \.hasGroup)
             }
+        )
+    }
+
+    func didRevealNotchDesktopsBar() {
+        oneTimeHints.markCompleted(.notchDesktopsBar)
+    }
+
+    /// Points to the notch on MacBooks where the Desktops Bar is hidden until hovered (max 2 times,
+    /// retired immediately once the user hovers the notch and reveals the bar).
+    func showNotchDesktopsBarHintIfNeeded() {
+        guard !isOnboardingVisible, showsSpaceBar, spaceBarPresentation != .always else { return }
+        let orderedScreens = [screenManager.activeScreen()] + screenManager.allScreens().filter { $0 != screenManager.activeScreen() }
+        guard let targetScreen = orderedScreens.first(where: { spaceBarController.notchAnchor(on: $0) != nil }) else {
+            return
+        }
+        let screenID = screenManager.identifier(for: targetScreen)
+        oneTimeHints.showOnce(
+            .notchDesktopsBar,
+            content: { OneTimeHintCopy.notchDesktopsBar },
+            placement: { [weak self] in
+                guard let self,
+                      let screen = self.screenManager.screen(for: screenID),
+                      let notchRect = self.spaceBarController.notchAnchor(on: screen) else { return nil }
+                return (.belowNotch(notchRect), screen)
+            },
+            stillValid: { [weak self] in
+                guard let self,
+                      !self.isOnboardingVisible,
+                      self.showsSpaceBar,
+                      self.spaceBarPresentation != .always,
+                      let screen = self.screenManager.screen(for: screenID) else { return false }
+                return self.spaceBarController.notchAnchor(on: screen) != nil
+            },
+            autoHideAfter: 12
         )
     }
 

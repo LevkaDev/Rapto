@@ -716,9 +716,33 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Temporarily suspends tiling, snapping, window watchers and global shortcuts without
+    /// changing any desktop's saved mode or layout. Always starts active on launch.
+    @Published var isPaused: Bool = false {
+        didSet {
+            guard isPaused != oldValue else { return }
+            handlePauseStateChanged()
+        }
+    }
+
+    /// New installs show the menu bar icon by default so Rapto stays reachable on notched MacBooks
+    /// where the Desktops Bar hides under the notch. Existing installs set up before this default keep it off.
+    nonisolated static func menuBarIconForInstallWithoutSavedPreference(hasCompletedOnboarding: Bool) -> Bool {
+        !hasCompletedOnboarding
+    }
+
+    /// Persists the initial menu bar icon visibility when unset, so finishing onboarding does not flip it.
+    nonisolated static func settleUnsavedMenuBarIcon(in defaults: UserDefaults) {
+        guard defaults.object(forKey: "showsMenuBarIcon") == nil else { return }
+        let show = menuBarIconForInstallWithoutSavedPreference(
+            hasCompletedOnboarding: defaults.bool(forKey: "hasCompletedOnboarding")
+        )
+        defaults.set(show, forKey: "showsMenuBarIcon")
+    }
+
     /// Whether the Rapto icon stays in the menu bar while the desktops pill is shown.
     /// The pill's right-click menu covers the same controls.
-    @Published var showsMenuBarIcon: Bool = false {
+    @Published var showsMenuBarIcon: Bool = true {
         didSet {
             guard showsMenuBarIcon != oldValue else { return }
             UserDefaults.standard.set(showsMenuBarIcon, forKey: "showsMenuBarIcon")
@@ -1017,6 +1041,9 @@ class AppState: ObservableObject {
         spaceBarController.onDidMoveWindow = { [weak self] windowID, spaceKey, displayID in
             self?.spaceBarDidMoveWindow(windowID, toSpaceKey: spaceKey, displayID: displayID)
         }
+        spaceBarController.onUserRevealedHoverBar = { [weak self] in
+            self?.didRevealNotchDesktopsBar()
+        }
         spaceBarController.start(enabled: showsSpaceBar)
         windowUsageTracker.start()
 
@@ -1029,6 +1056,11 @@ class AppState: ObservableObject {
 
         // The menu bar icon may be hidden, so onboarding cannot wait for its menu to open.
         checkAndShowOnboardingIfNeeded()
+        if hasCompletedOnboarding {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.showNotchDesktopsBarHintIfNeeded()
+            }
+        }
         UpdaterManager.shared.appState = self
         Scripting.appState = self
         ReleaseNotes.showIfUpdated(appState: self)
@@ -1115,6 +1147,7 @@ class AppState: ObservableObject {
         if defaults.object(forKey: "showsSpaceBar") != nil {
             showsSpaceBar = defaults.bool(forKey: "showsSpaceBar")
         }
+        Self.settleUnsavedMenuBarIcon(in: defaults)
         if defaults.object(forKey: "showsMenuBarIcon") != nil {
             showsMenuBarIcon = defaults.bool(forKey: "showsMenuBarIcon")
         }

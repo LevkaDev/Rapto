@@ -47,10 +47,12 @@ struct RaptoApp: App {
                     appState.checkAndShowOnboardingIfNeeded()
                 }
         } label: {
-            if appState.hasAccessibilityPermission {
-                Image("MenuBarIcon")
-            } else {
+            if !appState.hasAccessibilityPermission {
                 Image(systemName: "exclamationmark.triangle.fill")
+            } else if appState.isPaused {
+                Image("MenuBarIconPaused")
+            } else {
+                Image("MenuBarIcon")
             }
         }
         .menuBarExtraStyle(.menu)
@@ -144,6 +146,17 @@ struct MenuBarView: View {
             }
             Divider()
         }
+
+        Button {
+            appState.isPaused.toggle()
+        } label: {
+            Label(
+                appState.isPaused ? "Resume Rapto" : "Pause Rapto",
+                systemImage: appState.isPaused ? "play.fill" : "pause.fill"
+            )
+        }
+
+        Divider()
 
         Section("\(appState.spaceManager.currentSpaceDisplayName)") {
             if isMultiMonitor {

@@ -15,12 +15,20 @@ nonisolated struct HintCardContent: Equatable, Sendable {
     let title: String
     let detail: String?
     let isWarning: Bool
+    let showsUpwardPointer: Bool
 
-    init(icon: String = "sparkles", title: String, detail: String? = nil, isWarning: Bool = false) {
+    init(
+        icon: String = "sparkles",
+        title: String,
+        detail: String? = nil,
+        isWarning: Bool = false,
+        showsUpwardPointer: Bool = false
+    ) {
         self.icon = icon
         self.title = title
         self.detail = detail
         self.isWarning = isWarning
+        self.showsUpwardPointer = showsUpwardPointer
     }
 
     /// Splits a plain notice string into a two-tier HUD card with an appropriate SF Symbol.
@@ -106,6 +114,8 @@ final class SpaceBarHint {
     enum Placement {
         /// Centered horizontally under `anchor` (AppKit screen coordinates).
         case below(NSRect)
+        /// Centered directly under a notched screen's camera housing so the upward arrow meets it.
+        case belowNotch(NSRect)
         /// Centered horizontally inside `rect` near its bottom edge (AppKit screen coordinates).
         case insideBottom(NSRect)
         /// Centered horizontally inside `rect` near its top edge (AppKit screen coordinates).
@@ -153,20 +163,28 @@ final class SpaceBarHint {
         let xOrigin: CGFloat
         let yOrigin: CGFloat
 
+        let topMargin: CGFloat
         switch placement {
         case .below(let anchor):
             xOrigin = anchor.midX - size.width / 2
             yOrigin = anchor.minY - size.height - 8
+            topMargin = 10
+        case .belowNotch(let notchRect):
+            xOrigin = notchRect.midX - size.width / 2
+            yOrigin = notchRect.minY - size.height - 4
+            topMargin = 4
         case .insideBottom(let rect):
             xOrigin = rect.midX - size.width / 2
             yOrigin = rect.minY + 20
+            topMargin = 10
         case .insideTop(let rect):
             xOrigin = rect.midX - size.width / 2
             yOrigin = rect.maxY - size.height - 20
+            topMargin = 10
         }
 
         let clampedX = min(max(xOrigin, visible.minX + 10), visible.maxX - size.width - 10)
-        let clampedY = min(max(yOrigin, visible.minY + 10), visible.maxY - size.height - 10)
+        let clampedY = min(max(yOrigin, visible.minY + 10), visible.maxY - size.height - topMargin)
 
         panel.setFrame(NSRect(x: clampedX, y: clampedY, width: size.width, height: size.height).integral, display: true)
         panel.invalidateShadow()
@@ -320,9 +338,19 @@ private struct SpaceBarHintView: View {
     }
 
     var body: some View {
+        VStack(spacing: 6) {
+            if content.showsUpwardPointer {
+                NotchUpwardPointer()
+            }
+            cardBody
+        }
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var cardBody: some View {
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
 
-        HStack(alignment: .center, spacing: 11) {
+        return HStack(alignment: .center, spacing: 11) {
             iconBadge
 
             VStack(alignment: .leading, spacing: 2.5) {
@@ -368,7 +396,6 @@ private struct SpaceBarHintView: View {
                 lineWidth: 1
             )
         }
-        .environment(\.colorScheme, .dark)
     }
 
     private var iconBadge: some View {
@@ -434,5 +461,35 @@ private struct SpaceBarHintView: View {
                     lineWidth: 0.5
                 )
             }
+    }
+}
+
+/// Gently pulsing upward arrow centered above the notch hint pill.
+/// Stays motionless when Reduce Motion is enabled.
+private struct NotchUpwardPointer: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lift = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(red: 0.06, green: 0.07, blue: 0.10).opacity(0.82))
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+                )
+            Image(systemName: "arrow.up")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.white)
+        }
+        .frame(width: 26, height: 26)
+        .offset(y: (!reduceMotion && lift) ? -3 : 2)
+        .padding(.top, 4)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
+                lift = true
+            }
+        }
     }
 }

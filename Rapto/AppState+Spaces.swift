@@ -48,7 +48,9 @@ extension AppState {
         debugLog("AppState"," Space changed (primary): '\(oldSpaceID)' -> '\(newSpaceID)' (per-screen work delegated to handleDisplaySpaceChanged)")
         
         // Recreate highlight window on new Space (stationary windows stay on their original Space)
-        windowHighlightService?.recreateForNewSpace()
+        if !isPaused {
+            windowHighlightService?.recreateForNewSpace()
+        }
         
         if isOverlayVisible {
             isOverlayVisible = false
@@ -66,6 +68,11 @@ extension AppState {
         guard UserSession.isActive else { return }
         let oldSpaceID = previousDisplaySpaceIDs[displayID] ?? ""
         previousDisplaySpaceIDs[displayID] = newSpaceID
+        
+        guard !isPaused else {
+            debugLog("AppState", " Display Space changed while paused: skipping restore")
+            return
+        }
         
         // Find the screen for this display (displayID is a CGS UUID, not our screenID)
         guard let screen = screenManager.screen(forDisplayID: displayID) else {

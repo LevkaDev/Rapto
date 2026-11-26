@@ -600,7 +600,7 @@ struct TryItStepView: View {
             .frame(maxWidth: 520)
 
             VStack(alignment: .leading, spacing: 6) {
-                if appState.showsSpaceBar {
+                if appState.showsSpaceBar && !appState.isMenuBarIconVisible {
                     discover(icon: "menubar.rectangle", text: "Rapto lives in the Desktops Bar. Turn on Menu Bar Icon in Settings if you want both")
                 }
                 discover(icon: "nosign", text: "Leave out apps Rapto shouldn't touch in Settings → Apps")

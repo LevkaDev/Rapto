@@ -17,6 +17,15 @@ nonisolated enum HintID: String, CaseIterable, Hashable, Sendable {
     case snapBack = "snapBack"
     case groupBadge = "groupBadge"
     case focusMode = "focusMode"
+    case notchDesktopsBar = "notchDesktopsBar"
+
+    /// Maximum displays before this hint retires automatically.
+    var maxDisplays: Int {
+        switch self {
+        case .notchDesktopsBar: return 2
+        default: return OneTimeHintScheduler.maxDisplays
+        }
+    }
 }
 
 /// Pure scheduling state machine for unit testing contextual tips without real timers or windows.
@@ -41,7 +50,7 @@ nonisolated final class OneTimeHintScheduler {
 
     private let defaults: UserDefaults
     private let now: () -> Date
-    private let maxDisplayCount: Int
+    private let overrideMaxDisplayCount: Int?
     private let simultaneousWindow: TimeInterval
     private let groupBadgeGap: TimeInterval
 
@@ -51,16 +60,20 @@ nonisolated final class OneTimeHintScheduler {
 
     init(
         defaults: UserDefaults = .standard,
-        maxDisplayCount: Int = OneTimeHintScheduler.maxDisplays,
+        maxDisplayCount: Int? = nil,
         simultaneousWindow: TimeInterval = OneTimeHintScheduler.simultaneousGuardWindow,
         groupBadgeGap: TimeInterval = OneTimeHintScheduler.groupBadgeRepeatGap,
         now: @escaping () -> Date = Date.init
     ) {
         self.defaults = defaults
-        self.maxDisplayCount = maxDisplayCount
+        self.overrideMaxDisplayCount = maxDisplayCount
         self.simultaneousWindow = simultaneousWindow
         self.groupBadgeGap = groupBadgeGap
         self.now = now
+    }
+
+    func maxDisplayCount(for id: HintID) -> Int {
+        overrideMaxDisplayCount ?? id.maxDisplays
     }
 
     func displayCount(for id: HintID) -> Int {
@@ -75,7 +88,25 @@ nonisolated final class OneTimeHintScheduler {
     }
 
     func isExhausted(_ id: HintID) -> Bool {
-        displayCount(for: id) >= maxDisplayCount
+        displayCount(for: id) >= maxDisplayCount(for: id)
+    }
+
+    /// Retires a hint early once the user completes the interaction it teaches (e.g., hovering the notch).
+    func markCompleted(_ id: HintID) {
+        let limit = maxDisplayCount(for: id)
+        var counts: [String: Int] = [:]
+        if let existing = defaults.dictionary(forKey: Self.countsDefaultsKey) {
+            for (key, value) in existing {
+                if let n = (value as? NSNumber)?.intValue {
+                    counts[key] = n
+                }
+            }
+        }
+        counts[id.rawValue] = max(counts[id.rawValue] ?? 0, limit)
+        defaults.set(counts, forKey: Self.countsDefaultsKey)
+        if currentlyShowing == id {
+            didHideCurrentHint()
+        }
     }
 
     /// Shows immediately on every distinct user action (replacing any older visible tip), while
@@ -86,7 +117,7 @@ nonisolated final class OneTimeHintScheduler {
             return .alreadyVisible
         }
         let currentCount = displayCount(for: id)
-        guard currentCount < maxDisplayCount else { return .exhausted }
+        guard currentCount < maxDisplayCount(for: id) else { return .exhausted }
 
         let currentTime = now()
 
@@ -157,6 +188,13 @@ enum OneTimeHintCopy {
         icon: "square.grid.2x2.fill",
         title: "Windows Stay in Slots",
         detail: "Drop onto another window or empty slot to move"
+    )
+
+    nonisolated static let notchDesktopsBar = HintCardContent(
+        icon: "menubar.rectangle",
+        title: "Desktops Bar Is Up Here",
+        detail: "Move your pointer to the notch to show desktops and apps",
+        showsUpwardPointer: true
     )
 
     nonisolated static func groupBadge(enableScroll: Bool, cycleShortcut: String?) -> HintCardContent {
@@ -262,12 +300,22 @@ final class OneTimeHints {
         panel.hide()
     }
 
-    /// Shows `id` immediately up to 10 times on `screen` when `stillValid()` holds.
+    /// Marks `id` learned and hides it immediately if currently visible.
+    func markCompleted(_ id: HintID) {
+        let wasShowing = scheduler.currentlyShowing == id
+        scheduler.markCompleted(id)
+        if wasShowing {
+            panel.hide()
+        }
+    }
+
+    /// Shows `id` immediately up to its limit on `screen` when `stillValid()` holds.
     func showOnce(
         _ id: HintID,
         content: @escaping () -> HintCardContent,
         placement: @escaping () -> (SpaceBarHint.Placement, NSScreen)?,
-        stillValid: @escaping () -> Bool
+        stillValid: @escaping () -> Bool,
+        autoHideAfter: TimeInterval = 6
     ) {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
               let appState else {
@@ -290,7 +338,7 @@ final class OneTimeHints {
                 placement: resolvedPlacement,
                 on: screen,
                 look: look,
-                autoHideAfter: 6,
+                autoHideAfter: autoHideAfter,
                 onHidden: { [weak self] in
                     self?.scheduler.didHideCurrentHint()
                 }

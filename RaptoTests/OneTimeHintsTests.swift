@@ -20,14 +20,48 @@ struct OneTimeHintsTests {
         return (defaults, suiteName)
     }
 
-    @Test("HintID stored raw values and 10-display threshold never change unexpectedly")
+    @Test("HintID stored raw values and display thresholds never change unexpectedly")
     func hintIDRawValuesAreStable() {
         #expect(HintID.manualNeedsLayout.rawValue == "manualNeedsLayout")
         #expect(HintID.snapBack.rawValue == "snapBack")
         #expect(HintID.groupBadge.rawValue == "groupBadge")
         #expect(HintID.focusMode.rawValue == "focusMode")
-        #expect(HintID.allCases.count == 4)
+        #expect(HintID.notchDesktopsBar.rawValue == "notchDesktopsBar")
+        #expect(HintID.allCases.count == 5)
         #expect(OneTimeHintScheduler.maxDisplays == 10)
+        #expect(HintID.notchDesktopsBar.maxDisplays == 2)
+    }
+
+    @Test("Notch Desktops Bar hint caps at 2 displays and retires immediately once user reveals the bar")
+    func notchDesktopsBarLimitAndEarlyCompletion() {
+        let (defaults, suiteName) = makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let scheduler = OneTimeHintScheduler(defaults: defaults)
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .showNow(count: 1))
+        scheduler.didHideCurrentHint()
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .showNow(count: 2))
+        scheduler.didHideCurrentHint()
+        #expect(scheduler.isExhausted(.notchDesktopsBar))
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .exhausted)
+
+        // Reset and verify early completion after a single display
+        defaults.removeObject(forKey: OneTimeHintScheduler.countsDefaultsKey)
+        scheduler.resetState()
+
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .showNow(count: 1))
+        scheduler.markCompleted(.notchDesktopsBar)
+        #expect(scheduler.currentlyShowing == nil)
+        #expect(scheduler.isExhausted(.notchDesktopsBar))
+        #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .exhausted)
+    }
+
+    @Test("Notch Desktops Bar hint card carries the upward pointer flag")
+    func notchDesktopsBarCopyHasPointer() {
+        let card = OneTimeHintCopy.notchDesktopsBar
+        #expect(card.showsUpwardPointer == true)
+        #expect(card.title == "Desktops Bar Is Up Here")
+        #expect(card.detail?.contains("notch") == true)
     }
 
     @Test("Scheduler shows each HintID 10 times before retiring and allows immediate repeat after hide")
