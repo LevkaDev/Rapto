@@ -177,13 +177,25 @@ struct MenuBarView: View {
                         }
                         
                         if screenMode == .manualAssignment {
+                            let partitioned = appState.partitionedTemplates(for: screenInfo.screen)
                             Divider()
                             Menu("Layout: \(screenTemplateName)") {
-                                ForEach(appState.listedTemplates) { template in
+                                ForEach(partitioned.primary) { template in
                                     Toggle(template.name, isOn: Binding(
                                         get: { template.name == screenTemplateName },
                                         set: { _ in appState.applyTemplateToScreen(template: template, screen: screenInfo.screen) }
                                     ))
+                                }
+                                if !partitioned.ultrawide.isEmpty {
+                                    Divider()
+                                    Menu("Ultrawide") {
+                                        ForEach(partitioned.ultrawide) { template in
+                                            Toggle(template.name, isOn: Binding(
+                                                get: { template.name == screenTemplateName },
+                                                set: { _ in appState.applyTemplateToScreen(template: template, screen: screenInfo.screen) }
+                                            ))
+                                        }
+                                    }
                                 }
                             }
                         } else if screenMode == .dragSnap {
@@ -202,10 +214,21 @@ struct MenuBarView: View {
                 }
                 
                 if appState.currentMode == .manualAssignment {
+                    let partitioned = appState.partitionedTemplates(for: appState.screenManager.activeScreen())
                     Menu("Layout: \(currentTemplateName)") {
-                        ForEach(appState.listedTemplates) { template in
+                        ForEach(partitioned.primary) { template in
                             Button(template.name) {
                                 appState.applyTemplateDirectly(templateID: template.id)
+                            }
+                        }
+                        if !partitioned.ultrawide.isEmpty {
+                            Divider()
+                            Menu("Ultrawide") {
+                                ForEach(partitioned.ultrawide) { template in
+                                    Button(template.name) {
+                                        appState.applyTemplateDirectly(templateID: template.id)
+                                    }
+                                }
                             }
                         }
                     }

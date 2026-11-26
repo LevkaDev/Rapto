@@ -723,6 +723,18 @@ extension AppState {
     var listedTemplates: [GridTemplate] {
         allTemplates.filter { !hiddenStandardTemplateIDs.contains($0.id) }
     }
+
+    /// Splits listed layouts for `screen`: ultrawide screens see all layouts flat, while
+    /// laptops and regular monitors tuck ultrawide layouts into a secondary group.
+    func partitionedTemplates(for screen: NSScreen?) -> (primary: [GridTemplate], ultrawide: [GridTemplate]) {
+        let profile = screen.map(DisplayProfile.forScreen) ?? DisplayProfile.dominant(for: screenManager.allScreens())
+        guard !profile.prefersUltrawideLayouts else {
+            return (listedTemplates, [])
+        }
+        let primary = listedTemplates.filter { !PredefinedTemplates.ultrawideIDs.contains($0.id) }
+        let wide = listedTemplates.filter { PredefinedTemplates.ultrawideIDs.contains($0.id) }
+        return (primary, wide)
+    }
     
     func hideStandardTemplate(_ template: GridTemplate) {
         guard PredefinedTemplates.all.contains(where: { $0.id == template.id }) else { return }

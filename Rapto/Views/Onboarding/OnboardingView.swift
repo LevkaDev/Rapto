@@ -276,11 +276,18 @@ struct OnboardingView: View {
     /// Screens already in this mode are left alone, so their slots aren't cleared.
     private func applyChosenMode() {
         guard let mode = chosenMode else { return }
-        if mode == .autoTiling, appState.autoTilingPreferences.maxWindows != autoTilingMaxWindows {
+        if mode == .autoTiling {
+            let dominant = DisplayProfile.dominant(for: appState.screenManager.allScreens())
             var prefs = appState.autoTilingPreferences
             prefs.maxWindows = autoTilingMaxWindows
-            appState.autoTilingPreferences = prefs
-            debugLog("Onboarding", "Auto Tiling windows on screen: \(autoTilingMaxWindows)")
+            if !appState.hasCompletedOnboarding {
+                prefs.templateFor1Window = dominant.suggestedSingleWindowTemplateID
+            }
+            if prefs != appState.autoTilingPreferences {
+                appState.autoTilingPreferences = prefs
+                debugLog("Onboarding", "Auto Tiling windows on screen: \(autoTilingMaxWindows)")
+            }
+            appState.applyPerScreenAutoTilingOverrides(dominantMaxWindows: autoTilingMaxWindows)
         }
         appState.defaultModeForNewSpaces = mode
         for screen in appState.screenManager.allScreens() where appState.mode(for: screen) != mode {
@@ -289,10 +296,8 @@ struct OnboardingView: View {
         debugLog("Onboarding", "Chose mode \(mode.rawValue)")
     }
 
-    /// Five windows put the side slots at a fifth of the screen width, too narrow for most apps below 2560 pt
     static func suggestedMaxWindows() -> Int {
-        let widest = NSScreen.screens.map(\.frame.width).max() ?? 0
-        return widest >= 2560 ? 5 : 4
+        DisplayProfile.dominant(for: NSScreen.screens).suggestedMaxWindows
     }
 
     // MARK: - Permissions

@@ -27,9 +27,14 @@ struct GridTemplatePicker<TrailingContent: View>: View {
     
     var onUnhideStandard: ((GridTemplate) -> Void)? = nil
     
+    /// Ultrawide layouts tucked into an expandable group on laptops and regular monitors.
+    var ultrawideTemplates: [GridTemplate] = []
+
     /// Standard layouts removed from the list. Shown dimmed after the "Hidden" tile is clicked.
     var hiddenTemplates: [GridTemplate] = []
     
+    @State private var showsUltrawide = false
+    @State private var isUltrawideHovered = false
     @State private var showsHidden = false
     @State private var hoveredTemplateID: UUID?
     
@@ -45,6 +50,23 @@ struct GridTemplatePicker<TrailingContent: View>: View {
                     templateView(for: template)
                 }
                 
+                if !ultrawideTemplates.isEmpty {
+                    tileButton(
+                        title: "Ultrawide (\(ultrawideTemplates.count))",
+                        systemImage: showsUltrawide ? "chevron.left" : "rectangle.split.3x1",
+                        isHovered: $isUltrawideHovered
+                    ) {
+                        withAnimation(.easeOut(duration: 0.15)) { showsUltrawide.toggle() }
+                    }
+                    .help(showsUltrawide ? "Fold ultrawide layouts" : "Show layouts designed for wide monitors")
+                    
+                    if showsUltrawide {
+                        ForEach(ultrawideTemplates) { template in
+                            templateView(for: template)
+                        }
+                    }
+                }
+
                 if onAddCustom != nil {
                     addCustomButton
                 }

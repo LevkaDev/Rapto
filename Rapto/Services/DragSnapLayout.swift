@@ -15,17 +15,29 @@ struct DragSnapLayoutMenu: View {
 
     var body: some View {
         let current = appState.dragSnapTemplate(for: screen)
+        let partitioned = appState.partitionedTemplates(for: screen)
         Menu("Layout: \(current?.name ?? DragSnapLayoutName.standard)") {
             Toggle(DragSnapLayoutName.standard, isOn: Binding(
                 get: { current == nil },
                 set: { _ in appState.setDragSnapTemplate(nil, for: screen) }
             ))
             Divider()
-            ForEach(appState.listedTemplates) { template in
+            ForEach(partitioned.primary) { template in
                 Toggle(template.name, isOn: Binding(
                     get: { template.id == current?.id },
                     set: { _ in appState.setDragSnapTemplate(template, for: screen) }
                 ))
+            }
+            if !partitioned.ultrawide.isEmpty {
+                Divider()
+                Menu("Ultrawide") {
+                    ForEach(partitioned.ultrawide) { template in
+                        Toggle(template.name, isOn: Binding(
+                            get: { template.id == current?.id },
+                            set: { _ in appState.setDragSnapTemplate(template, for: screen) }
+                        ))
+                    }
+                }
             }
         }
     }

@@ -461,7 +461,8 @@ extension AppState {
            let configuredTemplate = allTemplates.first(where: { $0.id == templateID }) {
             template = configuredTemplate
         } else {
-            template = allTemplates.first(where: { $0.name == "1+2 Left" }) ?? allTemplates.first ?? PredefinedTemplates.onePlusTwoLeft
+            let suggested = DisplayProfile.forScreen(screen).suggestedManualTemplate
+            template = allTemplates.first(where: { $0.id == suggested.id }) ?? allTemplates.first ?? suggested
         }
         
         logger.info("Applying manual mode template: \(template.name) for screen \(self.screenManager.displayName(for: screen))")

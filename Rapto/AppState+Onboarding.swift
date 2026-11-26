@@ -53,17 +53,19 @@ extension AppState {
 
     /// Applies one of the three starter profiles from Settings → Guide:
     /// sets the mode on all connected displays and for newly created desktops,
-    /// sets 4 px window & screen-edge gaps, and configures mode-appropriate border defaults.
+    /// tunes Auto-tiling for the connected displays, sets 4 px window & screen-edge gaps,
+    /// and configures mode-appropriate border defaults.
     func applyStarterProfile(_ mode: TilingMode) {
         guard mode != .none else { return }
 
         if mode == .autoTiling {
-            let suggested = OnboardingView.suggestedMaxWindows()
-            if autoTilingPreferences.maxWindows != suggested {
-                var prefs = autoTilingPreferences
-                prefs.maxWindows = suggested
-                autoTilingPreferences = prefs
-            }
+            let screens = screenManager.allScreens()
+            let dominant = DisplayProfile.dominant(for: screens)
+            var prefs = autoTilingPreferences
+            prefs.maxWindows = dominant.suggestedMaxWindows
+            prefs.templateFor1Window = dominant.suggestedSingleWindowTemplateID
+            autoTilingPreferences = prefs
+            applyPerScreenAutoTilingOverrides(dominantMaxWindows: dominant.suggestedMaxWindows)
         }
 
         setWindowGap(Self.defaultGap)
@@ -85,6 +87,20 @@ extension AppState {
         }
         updateHighlightForCurrentMode()
         debugLog("AppState", " Applied starter profile: \(mode.rawValue)")
+    }
+
+    /// In multi-monitor setups (e.g. a MacBook paired with a wide monitor), gives narrower screens
+    /// their own smaller Auto-tiling window limit so windows aren't crushed on the smaller display.
+    func applyPerScreenAutoTilingOverrides(dominantMaxWindows: Int) {
+        let screens = screenManager.allScreens()
+        guard screens.count > 1 else { return }
+        for screen in screens {
+            let screenMax = DisplayProfile.forScreen(screen).suggestedMaxWindows
+            let screenID = screenManager.identifier(for: screen)
+            if screenMax < dominantMaxWindows && autoTilingMaxWindows(forScreenID: screenID) == nil {
+                setAutoTilingMaxWindows(screenMax, forScreenID: screenID)
+            }
+        }
     }
 
     /// Hides a suggested app chip in Guide's Smart App Scanner on this Mac.

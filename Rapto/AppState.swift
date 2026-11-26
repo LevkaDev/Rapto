@@ -1269,7 +1269,9 @@ class AppState: ObservableObject {
         loadFocusModeDoubleTapModifier()
         loadFloatingDoubleTapSettings()
         
-        autoTilingPreferences = AutoTilingPreferencesStorage.load()
+        let dominantProfile = DisplayProfile.dominant(for: screenManager.allScreens())
+        AutoTilingPreferencesStorage.settleUnsaved(in: defaults, for: dominantProfile)
+        autoTilingPreferences = AutoTilingPreferencesStorage.load(from: defaults)
         autoTilingService?.preferences = autoTilingPreferences
         autoTilingService?.allTemplates = allTemplates
         logger.info("Loaded auto-tiling preferences: maxWindows=\(self.autoTilingPreferences.maxWindows)")

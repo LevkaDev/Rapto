@@ -74,8 +74,9 @@ extension AppState {
         menu.addItem(modeItem)
 
         if mode == .manualAssignment {
+            let partitioned = partitionedTemplates(for: screen)
             let layoutMenu = NSMenu()
-            for template in listedTemplates {
+            for template in partitioned.primary {
                 let item = SpaceBarMenuItem(title: template.name) { [weak self] in
                     self?.spaceBarController.perform(on: space.id, displayID: displayID) {
                         guard let self, let screen = self.screenManager.screen(forDisplayID: displayID) else { return }
@@ -85,12 +86,30 @@ extension AppState {
                 item.state = template.id == templateID ? .on : .off
                 layoutMenu.addItem(item)
             }
+            if !partitioned.ultrawide.isEmpty {
+                layoutMenu.addItem(.separator())
+                let wideMenu = NSMenu()
+                for template in partitioned.ultrawide {
+                    let item = SpaceBarMenuItem(title: template.name) { [weak self] in
+                        self?.spaceBarController.perform(on: space.id, displayID: displayID) {
+                            guard let self, let screen = self.screenManager.screen(forDisplayID: displayID) else { return }
+                            self.applyTemplateToScreen(template: template, screen: screen)
+                        }
+                    }
+                    item.state = template.id == templateID ? .on : .off
+                    wideMenu.addItem(item)
+                }
+                let wideItem = NSMenuItem(title: "Ultrawide", action: nil, keyEquivalent: "")
+                wideItem.submenu = wideMenu
+                layoutMenu.addItem(wideItem)
+            }
             let templateName = allTemplates.first { $0.id == templateID }?.name ?? "None"
             let layoutItem = NSMenuItem(title: "Layout: \(templateName)", action: nil, keyEquivalent: "")
             layoutItem.submenu = layoutMenu
             menu.addItem(layoutItem)
         } else if mode == .dragSnap {
             let current = dragSnapTemplate(forSpaceKey: space.key, screenID: screenID)
+            let partitioned = partitionedTemplates(for: screen)
             let layoutMenu = NSMenu()
             let standard = SpaceBarMenuItem(title: DragSnapLayoutName.standard) { [weak self] in
                 self?.setDragSnapTemplate(nil, forSpaceKey: space.key, screenID: screenID)
@@ -98,12 +117,26 @@ extension AppState {
             standard.state = current == nil ? .on : .off
             layoutMenu.addItem(standard)
             layoutMenu.addItem(.separator())
-            for template in listedTemplates {
+            for template in partitioned.primary {
                 let item = SpaceBarMenuItem(title: template.name) { [weak self] in
                     self?.setDragSnapTemplate(template, forSpaceKey: space.key, screenID: screenID)
                 }
                 item.state = template.id == current?.id ? .on : .off
                 layoutMenu.addItem(item)
+            }
+            if !partitioned.ultrawide.isEmpty {
+                layoutMenu.addItem(.separator())
+                let wideMenu = NSMenu()
+                for template in partitioned.ultrawide {
+                    let item = SpaceBarMenuItem(title: template.name) { [weak self] in
+                        self?.setDragSnapTemplate(template, forSpaceKey: space.key, screenID: screenID)
+                    }
+                    item.state = template.id == current?.id ? .on : .off
+                    wideMenu.addItem(item)
+                }
+                let wideItem = NSMenuItem(title: "Ultrawide", action: nil, keyEquivalent: "")
+                wideItem.submenu = wideMenu
+                layoutMenu.addItem(wideItem)
             }
             let layoutItem = NSMenuItem(title: "Layout: \(current?.name ?? DragSnapLayoutName.standard)", action: nil, keyEquivalent: "")
             layoutItem.submenu = layoutMenu
