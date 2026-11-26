@@ -13,6 +13,8 @@ struct OverlayView: View {
     @State private var customTemplateName: String = ""
     @FocusState private var isLayoutNameFocused: Bool
     @State private var highlightMissingLayoutName: Bool = false
+    @State private var isShowingCustomDraft: Bool = true
+    @State private var isShowingFocusDraft: Bool = true
     
     var body: some View {
         ZStack {
@@ -185,6 +187,8 @@ struct OverlayView: View {
                 ZoneCreatorView(
                     screenSize: CGSize(width: visibleFrame.width, height: visibleFrame.height),
                     zones: $appState.tempZones,
+                    isShowingDraft: $isShowingCustomDraft,
+                    allowsSplitting: true,
                     onZoneCreated: { zone in
                         appState.addTempZone(zone)
                     },
@@ -193,6 +197,9 @@ struct OverlayView: View {
                     },
                     onZoneDeleted: { zone in
                         appState.removeTempZone(zone)
+                    },
+                    onZoneSplit: { original, first, second in
+                        appState.splitTempZone(original, into: first, and: second)
                     }
                 )
                 .frame(width: visibleFrame.width, height: visibleFrame.height)
@@ -221,7 +228,7 @@ struct OverlayView: View {
                 Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(Color(hue: 0.58, saturation: 0.7, brightness: 0.95))
-                Text("Drag handles to resize")
+                Text("Drag to move or resize (hold ⌥ for free)")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
             }
@@ -234,7 +241,7 @@ struct OverlayView: View {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(Color(hue: 0.35, saturation: 0.7, brightness: 0.85))
-                Text("Click + to add zone")
+                Text("Click empty area or + Add Zone")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
             }
@@ -391,13 +398,52 @@ struct OverlayView: View {
                     .foregroundColor(.white.opacity(0.7))
             }
 
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    isShowingCustomDraft = true
+                }
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Add Zone")
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
+                .foregroundColor(isShowingCustomDraft ? .white.opacity(0.4) : .white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(
+                            isShowingCustomDraft
+                                ? Color.white.opacity(0.06)
+                                : Color(hue: 0.58, saturation: 0.75, brightness: 0.92).opacity(0.32)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(
+                                    isShowingCustomDraft
+                                        ? Color.white.opacity(0.12)
+                                        : Color(hue: 0.58, saturation: 0.75, brightness: 0.95).opacity(0.65),
+                                    lineWidth: 1
+                                )
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isShowingCustomDraft)
+            .help(isShowingCustomDraft ? "Place or close the active draft zone first" : "Add another zone (or click any empty area)")
+
             if appState.canPopulateTempZonesFromWindows(on: NSScreen.main) {
                 Button(action: {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         let count = appState.populateTempZonesFromOpenWindows(on: NSScreen.main)
-                        if count > 0, customTemplateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            customTemplateName = appState.newLayoutFromWindowsName()
-                            highlightMissingLayoutName = false
+                        if count > 0 {
+                            isShowingCustomDraft = false
+                            if customTemplateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                customTemplateName = appState.newLayoutFromWindowsName()
+                                highlightMissingLayoutName = false
+                            }
                         }
                     }
                 }) {
@@ -486,6 +532,7 @@ struct OverlayView: View {
                 Button(action: {
                     highlightMissingLayoutName = false
                     customTemplateName = ""
+                    isShowingCustomDraft = true
                     appState.cancelCustomGridCreation()
                 }) {
                     Text("Cancel")
@@ -512,6 +559,7 @@ struct OverlayView: View {
                         focusLayoutNameField()
                     case .ready(let trimmedName):
                         highlightMissingLayoutName = false
+                        isShowingCustomDraft = true
                         appState.saveCustomTemplate(name: trimmedName)
                         customTemplateName = ""
                     }
@@ -750,6 +798,8 @@ struct OverlayView: View {
                 ZoneCreatorView(
                     screenSize: CGSize(width: visibleFrame.width, height: visibleFrame.height),
                     zones: $appState.tempZones,
+                    isShowingDraft: $isShowingFocusDraft,
+                    allowsSplitting: false,
                     onZoneCreated: { zone in
                         // Only allow one zone for focus mode
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {

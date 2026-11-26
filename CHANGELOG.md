@@ -11,6 +11,15 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- Changing `windowGap` or `screenEdgeGap` now updates visible snapped windows in Drag to Snap
+  right away (`DragSnapService.reapplyGaps`, recording each snapped window's `relativeFrame` until
+  manually resized) and reapplies gaps across every connected display instead of only the active
+  screen's mode (`AppState.reapplyLayoutWithNewGaps`).
+- Removed the duplicate `2+1+2` built-in layout (`PredefinedTemplates.twoOneTow`), which had
+  identical zones and fill order to `Center + Split Sides`. Saved preferences, screen/space
+  configurations, saved layouts, workspaces, layout shortcuts, and AppleScript calls targeting its
+  retired UUID (`00000001-0000-0000-0000-00000000000E`) now resolve automatically to
+  `Center + Split Sides` via `PredefinedTemplates.canonicalID(for:)`.
 - Switching back to an Auto-tiling desktop while an App-Napped Mac Catalyst app (such as Apple Maps)
   was waking up could cause Auto-tiling to drop that window as temporarily unresponsive, collapse
   the grid from 3 slots to 2, and treat the window as new once it answered — swapping it into the
@@ -53,6 +62,13 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
   now opt individual custom layouts into the top Drag to Snap layout picker (`dragSnapPickerTemplateIDs`)
   from Settings → Behavior or the Layout Overlay context menu; the picker separates custom layouts
   with a divider and wraps onto additional rows when needed so it stays inside the screen.
+- **Magnetic snapping, one-click split, and clean draft completion in the custom layout editor** (`ZoneCreatorView`,
+  `ZoneEditorGeometry`, `OverlayView`, `AppState+Layouts`): moving or resizing a zone now snaps
+  within `12 pt` to screen edges, neighboring zone edges/centers, and `1/4`, `1/3`, `1/2`, `2/3`,
+  `3/4` guides with visual guide lines (bypassed while holding Option), and adds one-click vertical
+  and horizontal split buttons centered with the zone controls with a hover cut-line preview.
+  Confirming a draft zone now places it and closes the draft cleanly (use `+ Add Zone` or click an
+  empty area to add another zone, or `×` to dismiss an unwanted draft).
 - **Simultaneous parallel window swaps** (`WindowSwapService`, `AppState+Hotkeys`): mouse
   drag-drop swaps and keyboard slot swaps now move both windows concurrently via
   `AccessibilityService.batchSetWindowFrames` with a calm highlight border fade-in instead of

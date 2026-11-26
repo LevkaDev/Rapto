@@ -58,7 +58,7 @@ extension AppState {
     func dragSnapTemplate(forSpaceKey spaceKey: String, screenID: String) -> GridTemplate? {
         let config = configuration(forSpaceID: spaceKey, screenID: screenID)
         guard let id = config.dragSnapTemplateID else { return nil }
-        return allTemplates.first { $0.id == id }
+        return template(withID: id)
     }
 
     /// Only remembers the layout: in Drag to Snap windows stay where they are until dragged
