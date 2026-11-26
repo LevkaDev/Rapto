@@ -480,7 +480,7 @@ extension AppState {
         autoTilingService?.updateKnownWindowsWithoutRedistribute()
     }
     
-    private func updateSlotFramesFromWindows(forScreenID screenID: String) {
+    func updateSlotFramesFromWindows(forScreenID screenID: String) {
         let screenState = layoutManager.state(forScreenID: screenID)
         guard screenState.isActive else { return }
         
