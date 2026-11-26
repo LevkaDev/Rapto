@@ -288,22 +288,29 @@ extension AppState {
         let layoutState = layoutManager.state(forScreenID: screenID)
         let targetFrame = layoutState.slots[targetSlotIndex].frame
         let sourceFrame = layoutState.slots[sourceSlotIndex].frame
-        
-        if let w1 = window1, let axElement = w1AXElement {
-            let success = accessibilityService.setWindowFrame(axWindow: axElement, frame: targetFrame, windowTitle: w1.title)
-            debugLog("AppState"," Positioned '\(w1.title)' in zone \(targetSlotIndex) using cached AXElement: \(success)")
-            if success {
-                // Update stored frame so next swap can find window by position
-                layoutManager.updateWindowFrame(w1.windowID, newFrame: targetFrame, forScreenID: screenID)
-            }
+
+        var swapTargets: [AccessibilityService.BatchFrameTarget] = []
+        if let w1 = window1 {
+            swapTargets.append(AccessibilityService.BatchFrameTarget(window: w1, axWindow: w1AXElement, frame: targetFrame))
         }
-        if let w2 = window2, let axElement = w2AXElement {
-            let success = accessibilityService.setWindowFrame(axWindow: axElement, frame: sourceFrame, windowTitle: w2.title)
-            debugLog("AppState"," Positioned '\(w2.title)' in zone \(sourceSlotIndex) using cached AXElement: \(success)")
-            if success {
-                // Update stored frame so next swap can find window by position
-                layoutManager.updateWindowFrame(w2.windowID, newFrame: sourceFrame, forScreenID: screenID)
-            }
+        if let w2 = window2 {
+            swapTargets.append(AccessibilityService.BatchFrameTarget(window: w2, axWindow: w2AXElement, frame: sourceFrame))
+        }
+
+        var startedTransition = false
+        let results = accessibilityService.batchSetWindowFrames(swapTargets) { [weak self] in
+            startedTransition = true
+            self?.windowHighlightService?.beginLayoutTransition()
+        }
+        if startedTransition {
+            windowHighlightService?.endLayoutTransition()
+        }
+        if let w1 = window1, results[w1.windowID] == true {
+            // Update stored frame so next swap can find window by position
+            layoutManager.updateWindowFrame(w1.windowID, newFrame: targetFrame, forScreenID: screenID)
+        }
+        if let w2 = window2, results[w2.windowID] == true {
+            layoutManager.updateWindowFrame(w2.windowID, newFrame: sourceFrame, forScreenID: screenID)
         }
         
         let afterState = layoutManager.state(forScreenID: screenID)

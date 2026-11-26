@@ -87,6 +87,9 @@ class WindowSwapService: ObservableObject {
     
     /// Callback when a swap is about to be performed (to disable snap-back)
     var onSwapStarting: (() -> Void)?
+
+    /// Called with `true` right before a batch swap starts and `false` once it completes.
+    var onLayoutTransition: ((Bool) -> Void)?
     
     /// Callback when a swap is performed (window1ID, window2ID)
     var onSwapPerformed: ((CGWindowID, CGWindowID) -> Void)?
@@ -665,37 +668,30 @@ class WindowSwapService: ObservableObject {
     
     private func performSwap(dragged: WindowInfo, target: WindowInfo, draggedOriginalFrame: CGRect) {
         logger.info("Swapping '\(dragged.title, privacy: .public)' with '\(target.title, privacy: .public)'")
-        
+
         onSwapStarting?()
-        
+
         let targetFrame = slotFrame?(target.windowID) ?? target.frame
         let draggedOriginalFrame = slotFrame?(dragged.windowID) ?? draggedOriginalFrame
-        
-        // Use cached AXUIElement for dragged window (obtained at drag start)
-        // This prevents position-based matching failures since window has moved during drag
-        var draggedSuccess = false
-        if let cachedDraggedAX = draggedWindowAXElement {
-            debugLog("WindowSwapService", "Using cached AXElement for dragged window")
-            draggedSuccess = accessibilityService.setWindowFrame(axWindow: cachedDraggedAX, frame: targetFrame, windowTitle: dragged.title)
-        } else {
-            debugLog("WindowSwapService", "⚠️ No cached AXElement for dragged, falling back to lookup")
-            let result = accessibilityService.setWindowPositionAndSize(dragged, position: targetFrame.origin, size: targetFrame.size)
-            draggedSuccess = result.position && result.size
+
+        // Move both windows concurrently in one beat using cached AX elements obtained before drag
+        let targets = [
+            AccessibilityService.BatchFrameTarget(window: dragged, axWindow: draggedWindowAXElement, frame: targetFrame),
+            AccessibilityService.BatchFrameTarget(window: target, axWindow: targetWindowAXElement, frame: draggedOriginalFrame)
+        ]
+
+        var startedTransition = false
+        let results = accessibilityService.batchSetWindowFrames(targets) { [weak self] in
+            startedTransition = true
+            self?.onLayoutTransition?(true)
         }
-        
-        // Use cached AXUIElement for target window (obtained when target was detected)
-        // This is essential for same-app swaps where dragged window has moved to target's position
-        // and position-based lookup would find the dragged window instead of the target
-        var targetSuccess = false
-        if let cachedTargetAX = targetWindowAXElement {
-            debugLog("WindowSwapService", "Using cached AXElement for target window")
-            targetSuccess = accessibilityService.setWindowFrame(axWindow: cachedTargetAX, frame: draggedOriginalFrame, windowTitle: target.title)
-        } else {
-            debugLog("WindowSwapService", "⚠️ No cached AXElement for target, falling back to lookup")
-            let result = accessibilityService.setWindowPositionAndSize(target, position: draggedOriginalFrame.origin, size: draggedOriginalFrame.size)
-            targetSuccess = result.position && result.size
+        if startedTransition {
+            onLayoutTransition?(false)
         }
-        
+
+        let draggedSuccess = results[dragged.windowID] == true
+        let targetSuccess = results[target.windowID] == true
+
         if draggedSuccess && targetSuccess {
             logger.info("Successfully swapped windows")
             onSwapPerformed?(dragged.windowID, target.windowID)
