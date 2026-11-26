@@ -36,6 +36,9 @@ final class InteractiveTourController {
             mode: mode,
             hasNotchedHoverBar: appState.hasNotchedHoverBar,
             alreadyArranged: alreadyArranged,
+            showsSpaceBar: appState.showsSpaceBar,
+            initialDesktopCount: appState.desktopCount(on: activeScreen),
+            windowFlowShortcut: appState.shortcutDisplayString(for: .openWindowFlow),
             onLayoutChange: { [weak self] in
                 self?.resizeToFit()
             },

@@ -786,6 +786,7 @@ final class SpaceBarController: ObservableObject {
             logger.notice("Add desktop: desktop \(newID) added")
             isAddingDesktop = false
             refresh()
+            NotificationCenter.default.post(name: .raptoTourDidAddDesktop, object: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 then?(newID)
             }

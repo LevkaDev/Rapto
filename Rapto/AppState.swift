@@ -715,6 +715,7 @@ class AppState: ObservableObject {
             self.isWindowFlowOpen = visible
             if visible {
                 self.oneTimeHints.markCompleted(.manyWindowsFlow)
+                NotificationCenter.default.post(name: .raptoTourDidOpenWindowFlow, object: nil)
             }
             self.windowUsageTracker.isSuppressed = visible
             let suppress = visible || self.isOverlayVisible
@@ -1064,6 +1065,7 @@ class AppState: ObservableObject {
         }
         spaceBarController.onDidMoveWindow = { [weak self] windowID, spaceKey, displayID in
             self?.spaceBarDidMoveWindow(windowID, toSpaceKey: spaceKey, displayID: displayID)
+            NotificationCenter.default.post(name: .raptoTourDidMoveWindowToDesktop, object: nil)
         }
         spaceBarController.onUserRevealedHoverBar = { [weak self] in
             self?.didRevealNotchDesktopsBar()

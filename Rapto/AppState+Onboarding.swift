@@ -202,6 +202,37 @@ extension AppState {
         TourSandboxWindows.shared.closeAll()
     }
 
+    /// True when at least one non-Rapto app window exists on the active display
+    /// (needed so the Desktops Bar has an app icon to drag and Window Flow has real windows).
+    var hasRealAppWindowsOnActiveScreen: Bool {
+        let screen = screenManager.activeScreen()
+        let displayID = screenManager.displayIdentifier(for: screen)
+        if let display = spaceBarController.displays.first(where: { $0.id == displayID }),
+           display.spaces.contains(where: { !$0.glyphs.isEmpty }) {
+            return true
+        }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        return eligibleWindowsForFirstArrange(on: screen).contains { $0.ownerPID != ownPID }
+    }
+
+    /// Creates a new macOS desktop on the active screen (used by Part 2 of the interactive tour).
+    func addDesktopOnActiveScreen() {
+        let displayID = screenManager.displayIdentifier(for: screenManager.activeScreen())
+        guard !displayID.isEmpty else { return }
+        spaceBarController.addDesktop(displayID: displayID)
+    }
+
+    /// Opens a Finder window on the current desktop so the user immediately has a real app
+    /// to drag in the Desktops Bar and view in Window Flow during the tour.
+    func openSampleFinderWindowForTour() {
+        NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    /// Opens Window Flow directly from Part 2 of the interactive tour.
+    func openWindowFlowFromTour() {
+        windowFlow.toggle()
+    }
+
     func resetOnboardingForDebug() {
         hasCompletedOnboarding = false
         debugLog("AppState", " Onboarding reset for debugging")

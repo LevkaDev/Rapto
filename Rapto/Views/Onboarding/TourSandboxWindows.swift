@@ -21,6 +21,9 @@ extension Notification.Name {
     static let raptoTourDidResizeSlot = Notification.Name("RaptoTourDidResizeSlot")
     static let raptoTourDidCycleGroup = Notification.Name("RaptoTourDidCycleGroup")
     static let raptoTourDidRevealNotchBar = Notification.Name("RaptoTourDidRevealNotchBar")
+    static let raptoTourDidAddDesktop = Notification.Name("RaptoTourDidAddDesktop")
+    static let raptoTourDidMoveWindowToDesktop = Notification.Name("RaptoTourDidMoveWindowToDesktop")
+    static let raptoTourDidOpenWindowFlow = Notification.Name("RaptoTourDidOpenWindowFlow")
 }
 
 final class TourSandboxWindows {
