@@ -402,4 +402,21 @@ struct DesktopMoveGrabTests {
         let origin = CGPoint(x: 1374, y: 34)
         #expect(SpaceBarController.isProbeShift(from: origin, to: CGPoint(x: 1388, y: 48)))
     }
+
+    @Test("Dock layer-20 and system overlays do not count as covering app title bars")
+    func blockingWindowFiltersSystemOverlaysAndKeepsAppAndFloatingWindows() {
+        let own: pid_t = 999
+        // Real bug observed on macOS 26: Dock owns a full-screen layer-20 window
+        #expect(!DesktopMoveGrabPlanner.isBlockingWindow(layer: 20, owner: "Dock", alpha: 1, pid: 100, ownPID: own))
+        #expect(!DesktopMoveGrabPlanner.isBlockingWindow(layer: 24, owner: "Window Server", alpha: 1, pid: 101, ownPID: own))
+        #expect(!DesktopMoveGrabPlanner.isBlockingWindow(layer: 25, owner: "Control Center", alpha: 1, pid: 102, ownPID: own))
+        #expect(!DesktopMoveGrabPlanner.isBlockingWindow(layer: -2147483623, owner: "Wallpaper", alpha: 1, pid: 103, ownPID: own))
+        #expect(!DesktopMoveGrabPlanner.isBlockingWindow(layer: 0, owner: "Dock", alpha: 1, pid: 100, ownPID: own))
+        #expect(!DesktopMoveGrabPlanner.isBlockingWindow(layer: 0, owner: "Rapto", alpha: 1, pid: own, ownPID: own))
+        #expect(!DesktopMoveGrabPlanner.isBlockingWindow(layer: 0, owner: "Spotify", alpha: 0, pid: 200, ownPID: own))
+
+        // Normal app windows (layer 0) and floating PiP/palettes (layer 3..8) still count
+        #expect(DesktopMoveGrabPlanner.isBlockingWindow(layer: 0, owner: "Spotify", alpha: 1, pid: 200, ownPID: own))
+        #expect(DesktopMoveGrabPlanner.isBlockingWindow(layer: 3, owner: "Phi", alpha: 1, pid: 201, ownPID: own))
+    }
 }

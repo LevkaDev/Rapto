@@ -1757,18 +1757,23 @@ final class SpaceBarController: ObservableObject {
         return result
     }
 
-    /// Every window on screen, front to back, with its owner and frame (top-left origin).
-    /// Rapto's own windows are left out: the border around the active window covers all of it
-    /// and lets clicks through, and the ones that take clicks (the group indicator) are told
-    /// apart by the hit test, which answers with Rapto there.
+    /// Real app windows on screen, front to back, with their owner and frame (top-left origin).
+    /// Excludes system overlay layers (such as Dock's full-screen layer-20 window and Window Server)
+    /// and Rapto's own windows (the active-window border is click-through, and clickable Rapto
+    /// windows such as the group indicator are still caught by AX hit-testing `hitPID == pid`).
     private static func windowsFrontToBack() -> [(pid: pid_t, frame: CGRect)] {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let ownPID = ProcessInfo.processInfo.processIdentifier
         return list.compactMap { info in
-            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID,
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"],
-                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { return nil }
+                  let x = bounds["X"], let y = bounds["Y"], let width = bounds["Width"], let height = bounds["Height"] else { return nil }
+            let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+            let owner = info[kCGWindowOwnerName as String] as? String ?? ""
+            let alpha = info[kCGWindowAlpha as String] as? Double ?? 1
+            guard DesktopMoveGrabPlanner.isBlockingWindow(
+                layer: layer, owner: owner, alpha: alpha, pid: pid, ownPID: ownPID
+            ) else { return nil }
             return (pid, CGRect(x: x, y: y, width: width, height: height))
         }
     }

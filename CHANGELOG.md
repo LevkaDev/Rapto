@@ -26,6 +26,9 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
     replaces the synchronous 250 ms main-thread sleep with an async retry.
   - Caches proven per-app relative grab anchors in session memory (invalidating automatically if
     a cached spot stops dragging or a move fails).
+  - Filters system overlay layers (`layer < 0` or `layer >= 20`, including Dock's full-screen
+    layer-20 container on macOS 26 and Window Server) out of `windowsFrontToBack` so system
+    overlays no longer cause `windowIsOnTop` to reject every title-bar spot.
 
 ## [6.2] - 2026-11-26
 

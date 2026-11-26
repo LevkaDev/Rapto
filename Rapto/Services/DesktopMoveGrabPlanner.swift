@@ -376,6 +376,27 @@ nonisolated enum DesktopMoveGrabPlanner {
         return result
     }
 
+    /// System processes whose overlay windows (e.g. Dock's full-screen layer-20 container or Window
+    /// Server's menu bar) span the screen transparently and must not be treated as covering app title bars.
+    static let systemOverlayOwners: Set<String> = [
+        "Window Server", "Dock", "SystemUIServer", "Control Center",
+        "Notification Center", "Spotlight", "TextInputMenuAgent",
+        "universalaccessd", "loginwindow", "WindowManager",
+        "CursorUIViewService", "AirBuddyHelper"
+    ]
+
+    /// Whether a Core Graphics window entry represents a real clickable app window that can block
+    /// mouse events to a title bar underneath it.
+    /// Excludes desktop/wallpaper layers (`< 0`), system layers (`>= 20`, including Dock's full-screen
+    /// `layer=20` container, menu bar `24`, status bar `25`, Window Server), Rapto's own windows and
+    /// invisible windows, while keeping normal (`0`) and floating app windows (e.g. PiP at `3`).
+    static func isBlockingWindow(layer: Int, owner: String, alpha: Double, pid: pid_t, ownPID: pid_t) -> Bool {
+        guard pid != ownPID, alpha > 0 else { return false }
+        guard layer >= 0 && layer < 20 else { return false }
+        guard !systemOverlayOwners.contains(owner) else { return false }
+        return true
+    }
+
     /// Safe release point outside `windowFrame` that stays clear of display borders when `screenBounds` is known.
     static func releasePoint(for point: CGPoint, windowFrame: CGRect, screenBounds: CGRect?) -> CGPoint {
         let edgeMargin: CGFloat = 8
