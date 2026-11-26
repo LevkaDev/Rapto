@@ -325,7 +325,7 @@ struct ModeChoice: Identifiable {
             ModeChoice(mode: .dragSnap, icon: "hand.draw", title: "Drag to Snap",
                        text: "Snap dragged windows to edges, the top bar or a layout. Drop in one zone to group"),
             ModeChoice(mode: .manualAssignment, icon: "square.grid.2x2", title: "Manual",
-                       text: "Pick a layout for the desktop and Rapto keeps current and new windows in its slots"),
+                       text: "Fixed grid for the desktop: windows stay in slots, extras group automatically, and a group indicator lets you switch between them"),
             ModeChoice(mode: .autoTiling, icon: "wand.and.stars", title: "Auto-tiling",
                        text: "Switches layouts on its own as windows open and close, grouping any extras"),
         ]
@@ -338,6 +338,10 @@ struct ModeStepView: View {
     @Binding var maxWindows: Int
     let suggestedMaxWindows: Int
     let overlayShortcut: String
+
+    private var recommendedMode: TilingMode {
+        DisplayProfile.dominant(for: NSScreen.screens).recommendedStarterMode
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -371,7 +375,7 @@ struct ModeStepView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Label("We recommend 4 for laptops and regular monitors, 5 for wide displays", systemImage: "exclamationmark.circle.fill")
+                Label("We recommend 2 for compact laptops, 3–4 for larger displays, 5 for wide displays", systemImage: "exclamationmark.circle.fill")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
@@ -410,6 +414,7 @@ struct ModeStepView: View {
 
     private func card(_ choice: ModeChoice) -> some View {
         let isSelected = selection == choice.mode
+        let isRecommended = choice.mode == recommendedMode
         return Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 selection = choice.mode
@@ -421,6 +426,14 @@ struct ModeStepView: View {
                         .font(.system(size: 20, weight: .medium))
                         .foregroundStyle(.tint)
                     Spacer()
+                    if isRecommended {
+                        Text("Recommended")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tint)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                    }
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 16))
                         .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))

@@ -586,6 +586,10 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Set by Guide's Smart App Scanner when no terminals, modal editors or VMs are installed,
+    /// so everyday users aren't left with an incomplete checklist badge for apps they don't use.
+    @Published var detectedNoPassthroughApps: Bool = false
+
     /// App bundle identifiers hidden by the user in Guide's Smart App Scanner (local to this Mac)
     @Published var dismissedAppSuggestions: Set<String> = Set(
         UserDefaults.standard.stringArray(forKey: "dismissedAppSuggestions") ?? []
@@ -931,6 +935,9 @@ class AppState: ObservableObject {
         self.snapBackService?.floatingWindowService = self.floatingWindowService
         self.snapBackService?.focusModeService = self.focusModeService
         self.snapBackService?.onWindowSnappedBack = { [weak self] cgSlotFrame, screenID in
+            self?.didSnapWindowBack(cgSlotFrame: cgSlotFrame, screenID: screenID)
+        }
+        self.autoTilingService?.onWindowSnappedBack = { [weak self] cgSlotFrame, screenID in
             self?.didSnapWindowBack(cgSlotFrame: cgSlotFrame, screenID: screenID)
         }
         self.focusModeService?.spaceIDForScreen = { [weak self] screen in self?.spaceID(for: screen) ?? "" }

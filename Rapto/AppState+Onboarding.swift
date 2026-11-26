@@ -157,7 +157,14 @@ extension AppState {
     func didSnapWindowBack(cgSlotFrame: CGRect, screenID: String) {
         oneTimeHints.showOnce(
             .snapBack,
-            content: { OneTimeHintCopy.snapBack },
+            content: { [weak self] in
+                guard let self, let screen = self.screenManager.screen(for: screenID) else {
+                    return OneTimeHintCopy.snapBack
+                }
+                return self.mode(for: screen) == .autoTiling
+                    ? OneTimeHintCopy.autoTilingSnapBack
+                    : OneTimeHintCopy.snapBack
+            },
             placement: { [weak self] in
                 guard let self, let screen = self.screenManager.screen(for: screenID) else { return nil }
                 let appKitSlotRect = self.screenManager.convertFromCGCoordinates(frame: cgSlotFrame, for: screen)
@@ -167,7 +174,8 @@ extension AppState {
                 guard let self,
                       !self.isOnboardingVisible,
                       let screen = self.screenManager.screen(for: screenID) else { return false }
-                return self.mode(for: screen) == .manualAssignment
+                let activeMode = self.mode(for: screen)
+                return (activeMode == .manualAssignment || activeMode == .autoTiling)
                     && self.layoutManager.state(forScreenID: screenID).isActive
             }
         )
@@ -256,7 +264,7 @@ extension AppState {
     /// Number of Fine-Tune checklist items (out of 4) currently satisfied in Settings → Guide.
     var setupGuideCompletedStepsCount: Int {
         var count = 0
-        if !passthroughApps.isEmpty || ignoredApps != Self.defaultIgnoredApps || !dismissedAppSuggestions.isEmpty {
+        if !passthroughApps.isEmpty || ignoredApps != Self.defaultIgnoredApps || !dismissedAppSuggestions.isEmpty || detectedNoPassthroughApps {
             count += 1
         }
         if defaultModeForNewSpaces != .none {

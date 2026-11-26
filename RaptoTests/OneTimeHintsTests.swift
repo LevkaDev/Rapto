@@ -56,12 +56,18 @@ struct OneTimeHintsTests {
         #expect(scheduler.request(.notchDesktopsBar, showsHints: true) == .exhausted)
     }
 
-    @Test("Notch Desktops Bar hint card carries the upward pointer flag")
-    func notchDesktopsBarCopyHasPointer() {
+    @Test("Notch Desktops Bar and Auto-tiling snap-back hint cards carry expected copy")
+    func notchDesktopsBarAndAutoTilingCopy() {
         let card = OneTimeHintCopy.notchDesktopsBar
         #expect(card.showsUpwardPointer == true)
         #expect(card.title == "Desktops Bar Is Up Here")
         #expect(card.detail?.contains("notch") == true)
+
+        let autoSnapBack = OneTimeHintCopy.autoTilingSnapBack
+        #expect(autoSnapBack.showsUpwardPointer == false)
+        #expect(autoSnapBack.title == "Auto-tiling Keeps Windows in Place")
+        #expect(autoSnapBack.detail?.contains("swap") == true)
+        #expect(autoSnapBack.detail?.contains("pause") == true)
     }
 
     @Test("Scheduler shows each HintID 10 times before retiring and allows immediate repeat after hide")

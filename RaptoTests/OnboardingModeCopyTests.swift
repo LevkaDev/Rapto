@@ -19,7 +19,7 @@ struct OnboardingModeCopyTests {
         #expect(TilingMode.manualAssignment.displayName == "Manual")
     }
 
-    @Test("Onboarding mode cards describe all three modes without requiring the overlay in Manual")
+    @Test("Onboarding mode cards describe all three modes and explain Manual auto-grouping with indicator")
     func onboardingModeChoices() {
         let choices = ModeChoice.all(overlayShortcut: "⌃⌥G")
         #expect(choices.map(\.mode) == [.dragSnap, .manualAssignment, .autoTiling])
@@ -27,6 +27,8 @@ struct OnboardingModeCopyTests {
         let manual = choices.first { $0.mode == .manualAssignment }
         #expect(manual?.title == "Manual")
         #expect(manual?.text.contains("slots") == true)
+        #expect(manual?.text.contains("group automatically") == true)
+        #expect(manual?.text.contains("group indicator") == true)
         #expect(manual?.text.contains("⌃⌥G") == false)
     }
 }

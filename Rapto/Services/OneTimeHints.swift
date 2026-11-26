@@ -190,6 +190,12 @@ enum OneTimeHintCopy {
         detail: "Drop onto another window or empty slot to move"
     )
 
+    nonisolated static let autoTilingSnapBack = HintCardContent(
+        icon: "wand.and.stars",
+        title: "Auto-tiling Keeps Windows in Place",
+        detail: "Drag onto another window to swap, or pause Rapto from the menu bar"
+    )
+
     nonisolated static let notchDesktopsBar = HintCardContent(
         icon: "menubar.rectangle",
         title: "Desktops Bar Is Up Here",
