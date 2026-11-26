@@ -118,4 +118,20 @@ struct DesktopMoveGrabTests {
     func probeOrderWithoutGuesses() {
         #expect(SpaceBarController.probeOrder(first: CGPoint(x: 87, y: 51), then: []) == [CGPoint(x: 87, y: 51)])
     }
+
+    @Test("After a spot failed, spots close to it are not tried again and the list is cut short")
+    func fallbackOrderSkipsTheFailedSpotAndIsLimited() {
+        let failed = CGPoint(x: 1920, y: 44)
+        let candidates = [
+            CGPoint(x: 88, y: 60), CGPoint(x: 1925, y: 50), CGPoint(x: 198, y: 60), CGPoint(x: 94, y: 44),
+            CGPoint(x: 3776, y: 44), CGPoint(x: 278, y: 60), CGPoint(x: 3686, y: 44)
+        ]
+        let order = SpaceBarController.fallbackOrder(after: failed, candidates: candidates, limit: 3)
+        #expect(order == [CGPoint(x: 88, y: 60), CGPoint(x: 198, y: 60), CGPoint(x: 3776, y: 44)])
+    }
+
+    @Test("With no other spot there is nothing to fall back on")
+    func fallbackOrderWithoutCandidates() {
+        #expect(SpaceBarController.fallbackOrder(after: CGPoint(x: 10, y: 10), candidates: [], limit: 5).isEmpty)
+    }
 }

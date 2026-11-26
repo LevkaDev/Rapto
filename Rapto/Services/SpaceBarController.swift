@@ -904,6 +904,16 @@ final class SpaceBarController: ObservableObject {
         _ window: SpaceBarWindowRef, axWindow: AXUIElement, frame: CGRect,
         to targetID: UInt64, displayID: String, home: UInt64?, targetKey: String?, deadline: Date
     ) {
+        // Until the window is in front, the spots are answered by the window still covering it
+        // (Yab raised behind Orca: the spots next to its buttons were taken for Orca's and skipped)
+        let top = CGPoint(x: frame.midX, y: frame.minY + 10)
+        if Date() < deadline, !SpaceBarController.windowIsOnTop(pid: window.pid, at: top, among: SpaceBarController.windowsFrontToBack()) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+                self?.grabWhenRaised(window, axWindow: axWindow, frame: frame, to: targetID,
+                                     displayID: displayID, home: home, targetKey: targetKey, deadline: deadline)
+            }
+            return
+        }
         guard let plan = grabPlan(in: axWindow, frame: frame, pid: window.pid) else {
             if Date() < deadline {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
@@ -922,7 +932,8 @@ final class SpaceBarController: ObservableObject {
         let source = CGEventSource(stateID: .hidSystemState)
         let grab = Grab(
             window: window, axWindow: axWindow, frame: frame, targetID: targetID, targetKey: targetKey,
-            displayID: displayID, home: home, cursor: CGEvent(source: nil)?.location ?? plan.points[0], source: source
+            displayID: displayID, home: home, cursor: CGEvent(source: nil)?.location ?? plan.points[0], source: source,
+            fallbacks: plan.fallbacks
         )
         if plan.isGuess {
             probe(plan.points, at: 0, grab: grab)
@@ -943,6 +954,10 @@ final class SpaceBarController: ObservableObject {
         /// Where the pointer was before the move, to put it back
         let cursor: CGPoint
         let source: CGEventSource?
+        /// Other spots to probe when the confirmed one does not drag the window
+        var fallbacks: [CGPoint] = []
+        /// The confirmed spot the fallbacks stand in for; used when none of them drags either
+        var lastResort: CGPoint?
     }
 
     /// How far a guessed spot is dragged to see whether the window follows: first a little, then
@@ -981,10 +996,39 @@ final class SpaceBarController: ObservableObject {
             let followed = now.map { SpaceBarController.windowFollowed(from: before, to: $0, dragOffset: Self.probeOffsets[0].x) } ?? false
             if followed || waited >= Self.followWait {
                 logger.notice("Move: \(followed ? "window follows" : "no move seen", privacy: .public) after \(String(format: "%.2f", waited), privacy: .public)s")
+                if !followed, !grab.fallbacks.isEmpty {
+                    self.tryFallbacks(after: point, grab: grab)
+                    return
+                }
                 self.carry(from: point, grab: grab)
                 return
             }
             self.waitForFollow(from: point, grab: grab, before: before, started: started)
+        }
+    }
+
+    // MARK: - Workaround: A spot Accessibility calls title bar does not always drag the window
+    // Cause: In Yab the middle of the top strip answers as a plain group of the window, like
+    //        empty toolbar space does, but it is the tab strip: a press there drags nothing,
+    //        and the desktop switched without the window.
+    // Context: When a confirmed spot does not move the window within `followWait`, it is let go
+    //          outside the window and a few other spots are probed. If none drags either, the
+    //          move goes on from the confirmed spot as before, for windows that never report
+    //          that they moved.
+    private func tryFallbacks(after point: CGPoint, grab: Grab) {
+        logger.notice("Move: letting go of \(String(describing: point), privacy: .public), probing \(grab.fallbacks.count) other spots")
+        let outside = SpaceBarController.releasePoint(for: point, windowFrame: grab.frame)
+        postMouse(.leftMouseDragged, at: outside, source: grab.source)
+        postMouse(.leftMouseUp, at: outside, source: grab.source)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
+            self.putBack(grab)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+                var next = grab
+                next.fallbacks = []
+                next.lastResort = point
+                self?.probe(grab.fallbacks, at: 0, grab: next)
+            }
         }
     }
 
@@ -1000,7 +1044,7 @@ final class SpaceBarController: ObservableObject {
             // None followed within the wait. Moving from the first spot is what worked before
             // spots were probed, for windows that are only slow to follow.
             logger.notice("Move: no guessed spot dragged the window, using the first")
-            pressAndCarry(from: points[0], grab: grab)
+            pressAndCarry(from: grab.lastResort ?? points[0], grab: grab)
             return
         }
         let point = points[index]
@@ -1285,10 +1329,47 @@ final class SpaceBarController: ObservableObject {
     private struct GrabPlan {
         let points: [CGPoint]
         let isGuess: Bool
+        /// For a confirmed spot: what to probe when it turns out not to drag the window
+        var fallbacks: [CGPoint] = []
     }
 
     /// Spots in the title bar that drag the window, not a tab or a button.
     private func grabPlan(in window: AXUIElement, frame: CGRect, pid: pid_t) -> GrabPlan? {
+        guard var plan = primaryGrabPlan(in: window, frame: frame, pid: pid) else { return nil }
+        if !plan.isGuess {
+            plan.fallbacks = fallbackSpots(after: plan.points[0], in: window, frame: frame, pid: pid)
+        }
+        return plan
+    }
+
+    /// How many other spots are probed after a confirmed one failed: each costs a quarter of a second
+    private static let fallbackLimit = 5
+
+    /// Spots that are no control and lie on the window, next to the window buttons first, then
+    /// along the title bar and along the top edge.
+    private func fallbackSpots(after failed: CGPoint, in window: AXUIElement, frame: CGRect, pid: pid_t) -> [CGPoint] {
+        var candidates: [CGPoint] = []
+        let button = buttonFrame(kAXZoomButtonAttribute, of: window)
+            ?? buttonFrame(kAXFullScreenButtonAttribute, of: window)
+            ?? buttonFrame(kAXCloseButtonAttribute, of: window)
+        if let button {
+            candidates += [10.0, 28.0, 56.0].map { CGPoint(x: button.maxX + $0, y: button.midY) }
+            candidates += SpaceBarController.guessedGrabXs(buttonsMaxX: button.maxX, frameMinX: frame.minX, frameMaxX: frame.maxX)
+                .map { CGPoint(x: $0, y: button.midY) }
+        }
+        candidates += [frame.minX + 90, frame.maxX - 60, frame.minX + 20, frame.maxX - 150].map { CGPoint(x: $0, y: frame.minY + 10) }
+        let windows = SpaceBarController.windowsFrontToBack()
+        let usable = barePagePoints(candidates, frame: frame, pid: pid)
+            .filter { SpaceBarController.windowIsOnTop(pid: pid, at: $0, among: windows) }
+        return SpaceBarController.fallbackOrder(after: failed, candidates: usable, limit: Self.fallbackLimit)
+    }
+
+    /// The spots to probe after `failed`: none close to it or to one another, at most `limit`.
+    nonisolated static func fallbackOrder(after failed: CGPoint, candidates: [CGPoint], limit: Int) -> [CGPoint] {
+        Array(probeOrder(first: failed, then: candidates).dropFirst().prefix(limit))
+    }
+
+    private func primaryGrabPlan(in window: AXUIElement, frame: CGRect, pid: pid_t) -> GrabPlan? {
         var nextToButtons: [CGPoint] = []
         let button = buttonFrame(kAXZoomButtonAttribute, of: window)
             ?? buttonFrame(kAXFullScreenButtonAttribute, of: window)
