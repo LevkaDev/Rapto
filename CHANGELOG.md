@@ -11,6 +11,7 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 ## [Unreleased]
 
 ### Fixed
+- Rapto no longer aborts at launch in `AG::Graph::value_set` when the Desktops Bar is on: `SpaceBarController.start(enabled:)` builds and sizes its panels on the next turn of the main loop instead of inside `AppState.init`, which SwiftUI runs during scene resolution. Reported on a MacBook Pro with the lid closed and two external displays.
 - Unit tests calling `AppState()` no longer start live window watchers, SpaceManager observers, or register real global hotkeys, and `FileLogger` now refuses to write to `~/Library/Logs/Rapto/debug.log` while running under `XCTest`.
 - `HotkeyManager.deinit` now unregisters every Carbon hotkey registered by the manager (not only the main overlay shortcut), and `registerHotkeyInternal` logs installation and registration failures when resuming hotkeys.
 
