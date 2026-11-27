@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src=".github/readme-hero.webp" width="820" alt="Five windows arranged by Rapto in a layout with a large centre slot">
+  <img src=".github/readme-hero.webp" width="820" alt="Window Flow 3D switcher showing live window previews across macOS desktops">
 </p>
 
 Rapto is free and open source, with no trial, subscription or license key. Most people should simply
