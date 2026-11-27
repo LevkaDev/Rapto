@@ -10,6 +10,8 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+## [6.4] - 2026-11-27
+
 ### Fixed
 - Stabilized Desktops Bar rendering in `SpaceBarController`: preserved per-desktop app icon order across window focus changes (`stableAppOrder`), replaced `.integral` framing with exact integral bounds (`panelFrame`), disabled implicit resize animations and invalidated the panel shadow on size changes, and prevented periodic refreshes from cutting hover fade-out animations short (`panelAlphaAction`).
 - Rapto no longer aborts at launch in `AG::Graph::value_set` when the Desktops Bar is on: `SpaceBarController.start(enabled:)` builds and sizes its panels on the next turn of the main loop instead of inside `AppState.init`, which SwiftUI runs during scene resolution. Reported on a MacBook Pro with the lid closed and two external displays.
