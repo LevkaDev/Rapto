@@ -85,12 +85,14 @@ class AppState: ObservableObject {
     func mode(for screen: NSScreen) -> TilingMode {
         let screenID = screenManager.identifier(for: screen)
         let screenSpaceID = spaceID(for: screen)
-        let config = ScreenConfigurationStorage.configuration(
-            forSpaceID: screenSpaceID,
-            screenID: screenID,
-            in: screenConfigurations
-        )
-        return config.mode
+        let key = ConfigurationKey.make(spaceID: screenSpaceID, screenID: screenID)
+        if let config = screenConfigurations[key] {
+            return config.mode
+        }
+        guard startsServices else {
+            return defaultModeForNewSpaces
+        }
+        return ScreenConfiguration.userDefault.mode
     }
 
     /// Auto Tiling keeps its own slots in sync, so Manual mode handlers must leave these screens alone
@@ -316,7 +318,9 @@ class AppState: ObservableObject {
     /// If disabled and moveRequiresShift is also disabled, moveRequiresShift will be auto-enabled
     @Published var swapRequiresOption: Bool = true {
         didSet {
-            UserDefaults.standard.set(swapRequiresOption, forKey: "swapRequiresOption")
+            if startsServices {
+                UserDefaults.standard.set(swapRequiresOption, forKey: "swapRequiresOption")
+            }
             windowSwapService?.requiresModifierKey = swapRequiresOption
             
             // Swap and move can't both work without a modifier, so re-enable the other one
@@ -331,7 +335,9 @@ class AppState: ObservableObject {
     /// If disabled and swapRequiresOption is also disabled, swapRequiresOption will be auto-enabled
     @Published var moveRequiresShift: Bool = false {
         didSet {
-            UserDefaults.standard.set(moveRequiresShift, forKey: "moveRequiresShift")
+            if startsServices {
+                UserDefaults.standard.set(moveRequiresShift, forKey: "moveRequiresShift")
+            }
             windowSwapService?.moveRequiresShift = moveRequiresShift
             
             // Swap and move can't both work without a modifier, so re-enable the other one
@@ -515,7 +521,9 @@ class AppState: ObservableObject {
     /// Logs are written to ~/Library/Logs/Rapto/debug.log
     @Published var enableFileLogging: Bool = false {
         didSet {
-            UserDefaults.standard.set(enableFileLogging, forKey: "enableFileLogging")
+            if startsServices {
+                UserDefaults.standard.set(enableFileLogging, forKey: "enableFileLogging")
+            }
             FileLogger.shared.isEnabled = enableFileLogging
         }
     }
@@ -531,8 +539,9 @@ class AppState: ObservableObject {
     /// Bundle identifiers of apps to ignore in window management
     @Published var ignoredApps: Set<String> = AppState.defaultIgnoredApps {
         didSet {
-            saveIgnoredApps()
             windowManager.ignoredBundleIdentifiers = ignoredApps
+            guard startsServices else { return }
+            saveIgnoredApps()
             WindowClassifier.shared.userExcludedBundleIDs = ignoredApps
         }
     }
@@ -546,6 +555,7 @@ class AppState: ObservableObject {
     /// Bundle identifiers of apps where hotkeys are disabled (passthrough)
     @Published var passthroughApps: Set<String> = [] {
         didSet {
+            guard startsServices else { return }
             savePassthroughApps()
         }
     }
@@ -635,9 +645,9 @@ class AppState: ObservableObject {
     }
 
     /// Whether the user finished the Quick Setup checklist in Settings → Guide (local to this Mac)
-    @Published var hasCompletedSetupGuide: Bool = UserDefaults.standard.bool(forKey: "hasCompletedSetupGuide") {
+    @Published var hasCompletedSetupGuide: Bool {
         didSet {
-            guard hasCompletedSetupGuide != oldValue else { return }
+            guard hasCompletedSetupGuide != oldValue, startsServices else { return }
             UserDefaults.standard.set(hasCompletedSetupGuide, forKey: "hasCompletedSetupGuide")
         }
     }
@@ -647,20 +657,20 @@ class AppState: ObservableObject {
     @Published var detectedNoPassthroughApps: Bool = false
 
     /// App bundle identifiers hidden by the user in Guide's Smart App Scanner (local to this Mac)
-    @Published var dismissedAppSuggestions: Set<String> = Set(
-        UserDefaults.standard.stringArray(forKey: "dismissedAppSuggestions") ?? []
-    ) {
+    @Published var dismissedAppSuggestions: Set<String> {
         didSet {
-            guard dismissedAppSuggestions != oldValue else { return }
+            guard dismissedAppSuggestions != oldValue, startsServices else { return }
             UserDefaults.standard.set(Array(dismissedAppSuggestions).sorted(), forKey: "dismissedAppSuggestions")
         }
     }
 
     /// Whether in-action hints are shown during dragging and shortcuts (exported in SettingsBackup)
-    @Published var showsHints: Bool = (UserDefaults.standard.object(forKey: "showsHints") as? Bool) ?? true {
+    @Published var showsHints: Bool {
         didSet {
             guard showsHints != oldValue else { return }
-            UserDefaults.standard.set(showsHints, forKey: "showsHints")
+            if startsServices {
+                UserDefaults.standard.set(showsHints, forKey: "showsHints")
+            }
             windowSwapService?.showsHints = showsHints
             dragSnapService?.showsHints = showsHints
             spaceBarController.showsHints = showsHints
@@ -683,11 +693,9 @@ class AppState: ObservableObject {
     
     /// Saved workspaces: the apps of one desktop and where they go
     /// The first stored setting read at launch, so saved settings are moved to stable display ids here
-    @Published var workspaces: [Workspace] = {
-        ScreenIDMigration.run()
-        return WorkspaceStorage.load()
-    }() {
+    @Published var workspaces: [Workspace] {
         didSet {
+            guard startsServices else { return }
             WorkspaceStorage.save(workspaces)
             if !workspaces.isEmpty {
                 oneTimeHints.markCompleted(.workspacesTip)
@@ -924,34 +932,63 @@ class AppState: ObservableObject {
 
     /// Standard layouts the user removed from the lists.
     /// They are only left out of menus and pickers: a desktop that already uses one keeps working.
-    @Published var hiddenStandardTemplateIDs: Set<UUID> = Set(
-        (UserDefaults.standard.stringArray(forKey: AppState.hiddenStandardTemplatesKey) ?? [])
-            .compactMap(UUID.init(uuidString:))
-            .filter { $0 != PredefinedTemplates.retiredTwoOneTwoID }
-    )
+    @Published var hiddenStandardTemplateIDs: Set<UUID>
 
     /// Custom layouts pinned to the top Drag to Snap layout picker bar.
-    @Published var dragSnapPickerTemplateIDs: Set<UUID> = Set(
-        (UserDefaults.standard.stringArray(forKey: AppState.dragSnapPickerTemplatesKey) ?? []).compactMap(UUID.init(uuidString:))
-    )
+    @Published var dragSnapPickerTemplateIDs: Set<UUID>
+
+    /// Whether this instance runs live system services and persists user preferences.
+    let startsServices: Bool
 
     // MARK: - Initialization
     
-    init() {
-        self.accessibilityService = AccessibilityService()
+    /// `startServices` defaults to `false` under `XCTest` so tests calling `AppState()` work
+    /// against in-memory state without registering global hotkeys, attaching observers,
+    /// touching real windows, or mutating the user's preferences.
+    init(startServices: Bool = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil) {
+        self.startsServices = startServices
+        if startServices {
+            ScreenIDMigration.run()
+            self._workspaces = Published(initialValue: WorkspaceStorage.load())
+            self._hasCompletedSetupGuide = Published(initialValue: UserDefaults.standard.bool(forKey: "hasCompletedSetupGuide"))
+            self._dismissedAppSuggestions = Published(initialValue: Set(UserDefaults.standard.stringArray(forKey: "dismissedAppSuggestions") ?? []))
+            self._showsHints = Published(initialValue: (UserDefaults.standard.object(forKey: "showsHints") as? Bool) ?? true)
+            self._hiddenStandardTemplateIDs = Published(initialValue: Set(
+                (UserDefaults.standard.stringArray(forKey: AppState.hiddenStandardTemplatesKey) ?? [])
+                    .compactMap(UUID.init(uuidString:))
+                    .filter { $0 != PredefinedTemplates.retiredTwoOneTwoID }
+            ))
+            self._dragSnapPickerTemplateIDs = Published(initialValue: Set(
+                (UserDefaults.standard.stringArray(forKey: AppState.dragSnapPickerTemplatesKey) ?? [])
+                    .compactMap(UUID.init(uuidString:))
+            ))
+        } else {
+            self._workspaces = Published(initialValue: [])
+            self._hasCompletedSetupGuide = Published(initialValue: false)
+            self._dismissedAppSuggestions = Published(initialValue: [])
+            self._showsHints = Published(initialValue: true)
+            self._hiddenStandardTemplateIDs = Published(initialValue: [])
+            self._dragSnapPickerTemplateIDs = Published(initialValue: [])
+        }
+
+        self.accessibilityService = AccessibilityService(configureSystemTimeout: startServices)
         self.spaceBarController = SpaceBarController()
         self.windowUsageTracker = WindowUsageTracker(spaceBar: spaceBarController)
         self.windowManager = WindowManager()
-        self.screenManager = ScreenManager()
+        self.screenManager = ScreenManager(startMonitoring: startServices)
         self.screenManager.windowGap = Self.defaultGap
         self.screenManager.screenEdgeGap = Self.defaultGap
         self.hotkeyManager = HotkeyManager()
         self.customTemplateStorage = CustomTemplateStorage()
         self.templateHotkeyStorage = TemplateHotkeyStorage()
-        self.spaceManager = SpaceManager()
+        self.spaceManager = SpaceManager(startMonitoring: startServices)
         
         // Initialize unified layout manager (must be before services that depend on it)
         self.layoutManager = WindowLayoutManager(screenManager: screenManager)
+
+        guard startServices else {
+            return
+        }
 
         self.customTemplates = customTemplateStorage.loadTemplates()
         

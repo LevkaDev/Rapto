@@ -14,16 +14,27 @@ final class FileLogger {
     
     static let shared = FileLogger()
     
+    /// Unit tests run inside the debug host app; never write test output into the user's debug.log
+    static func allowsFileLogging(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        environment["XCTestConfigurationFilePath"] == nil
+    }
+
     // MARK: - Properties
     
     /// Whether file logging is enabled (controlled by user setting)
     var isEnabled: Bool = false {
         didSet {
+            guard allowsFileWriting else {
+                isEnabled = false
+                return
+            }
             if isEnabled && !oldValue {
                 writeHeader()
             }
         }
     }
+
+    private let allowsFileWriting: Bool
     
     /// Maximum log file size before rotation (5 MB)
     private let maxFileSize: UInt64 = 5 * 1024 * 1024
@@ -49,11 +60,14 @@ final class FileLogger {
     // MARK: - Initialization
     
     private init() {
+        allowsFileWriting = Self.allowsFileLogging()
         let libraryPath = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
         logDirectory = libraryPath.appendingPathComponent("Logs/Rapto", isDirectory: true)
         logFilePath = logDirectory.appendingPathComponent("debug.log")
         
-        try? FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+        if allowsFileWriting {
+            try? FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+        }
     }
     
     deinit {
@@ -63,7 +77,7 @@ final class FileLogger {
     // MARK: - Public Methods
     
     func log(_ category: String, _ message: String) {
-        guard isEnabled else { return }
+        guard isEnabled, allowsFileWriting else { return }
         
         queue.async { [weak self] in
             self?.writeLog(category: category, message: message)
@@ -122,6 +136,7 @@ final class FileLogger {
     }
     
     private func writeHeader() {
+        guard allowsFileWriting else { return }
         queue.async { [weak self] in
             guard let self = self else { return }
             

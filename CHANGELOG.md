@@ -10,6 +10,10 @@ the first open-source release. Earlier releases, 2.0 to 5.76, are described on
 
 ## [Unreleased]
 
+### Fixed
+- Unit tests calling `AppState()` no longer start live window watchers, SpaceManager observers, or register real global hotkeys, and `FileLogger` now refuses to write to `~/Library/Logs/Rapto/debug.log` while running under `XCTest`.
+- `HotkeyManager.deinit` now unregisters every Carbon hotkey registered by the manager (not only the main overlay shortcut), and `registerHotkeyInternal` logs installation and registration failures when resuming hotkeys.
+
 ## [6.3] - 2026-11-27
 
 ### Fixed

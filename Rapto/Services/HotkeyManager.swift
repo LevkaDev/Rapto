@@ -71,7 +71,7 @@ class HotkeyManager {
     var shouldPassthrough: (() -> Bool)?
     
     deinit {
-        unregisterHotkey()
+        unregisterAllHotkeys()
     }
     
     // MARK: - Public Methods
@@ -93,48 +93,7 @@ class HotkeyManager {
         
         guard !isSuspended else { return }
         
-        var hotKeyID = EventHotKeyID()
-        hotKeyID.signature = "GSNP".fourCharCode
-        hotKeyID.id = 1
-        
-        if eventHandlerRef == nil {
-            var eventType = EventTypeSpec(
-                eventClass: OSType(kEventClassKeyboard),
-                eventKind: UInt32(kEventHotKeyPressed)
-            )
-            
-            let status = InstallEventHandler(
-                GetApplicationEventTarget(),
-                { (_, event, userData) -> OSStatus in
-                    guard let userData = userData else { return noErr }
-                    let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
-                    manager.handleHotkeyEvent(event)
-                    return noErr
-                },
-                1,
-                &eventType,
-                Unmanaged.passUnretained(self).toOpaque(),
-                &eventHandlerRef
-            )
-            
-            guard status == noErr else {
-                debugLog("HotkeyManager"," Failed to install event handler, status: \(status)")
-                return
-            }
-        }
-        
-        let registerStatus = RegisterEventHotKey(
-            keyCode,
-            modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotkeyRef
-        )
-        
-        if registerStatus != noErr {
-            debugLog("HotkeyManager"," Failed to register hotkey, status: \(registerStatus)")
-        }
+        registerHotkeyInternal(keyCode: keyCode, modifiers: modifiers, handler: handler)
     }
     
     private func handleHotkeyEvent(_ event: EventRef?) {
@@ -253,16 +212,40 @@ class HotkeyManager {
         storedMainHotkey = nil
     }
     
-    // MARK: - Suspend/Resume for Passthrough
+    /// Unregisters every Carbon hotkey registered by this manager and removes its event handler.
+    func unregisterAllHotkeys() {
+        unregisterActiveHotkeys()
+        
+        if let handlerRef = eventHandlerRef {
+            RemoveEventHandler(handlerRef)
+            eventHandlerRef = nil
+        }
+        
+        eventHandler = nil
+        storedMainHotkey = nil
+        storedAdditionalHotkeys.removeAll()
+        storedTemplateHotkeys.removeAll()
+        storedSwapHotkeys.removeAll()
+        storedMoveToSlotHotkeys.removeAll()
+        storedWindowMoveHotkeys.removeAll()
+        storedResizeHotkeys.removeAll()
+        storedFocusSlotHotkeys.removeAll()
+        storedFocusDirectionHotkeys.removeAll()
+        storedModeCycleHotkey = nil
+        storedFullscreenHotkey = nil
+        storedRestoreLayoutHotkey = nil
+        storedGenericHotkeys.removeAll()
+        storedActionHotkeys.removeAll()
+        swapHandler = nil
+        moveToSlotHandler = nil
+        windowMoveHandler = nil
+        resizeHandler = nil
+        focusSlotHandler = nil
+        focusDirectionHandler = nil
+    }
     
-    /// Suspend all hotkeys (unregister temporarily) for passthrough mode
-    /// Key events will pass through to the focused application
-    func suspendHotkeys() {
-        guard !isSuspended else { return }
-        
-        debugLog("HotkeyManager", " Suspending all hotkeys for passthrough")
-        isSuspended = true
-        
+    /// Unregisters all currently active Carbon hotkeys while leaving stored definitions intact.
+    private func unregisterActiveHotkeys() {
         if let ref = hotkeyRef {
             UnregisterEventHotKey(ref)
             hotkeyRef = nil
@@ -332,7 +315,18 @@ class HotkeyManager {
             UnregisterEventHotKey(entry.ref)
         }
         genericHotkeys.removeAll()
+    }
+    
+    // MARK: - Suspend/Resume for Passthrough
+    
+    /// Suspend all hotkeys (unregister temporarily) for passthrough mode
+    /// Key events will pass through to the focused application
+    func suspendHotkeys() {
+        guard !isSuspended else { return }
         
+        debugLog("HotkeyManager", " Suspending all hotkeys for passthrough")
+        isSuspended = true
+        unregisterActiveHotkeys()
         // The stored registrations stay, so resumeHotkeys() can register them again
     }
     
@@ -422,7 +416,7 @@ class HotkeyManager {
         }
     }
     
-    /// Internal register without storing (used by resume)
+    /// Internal register without storing (used by initial registration and resume)
     private func registerHotkeyInternal(keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) {
         if let ref = hotkeyRef {
             UnregisterEventHotKey(ref)
@@ -441,7 +435,7 @@ class HotkeyManager {
                 eventKind: UInt32(kEventHotKeyPressed)
             )
             
-            InstallEventHandler(
+            let status = InstallEventHandler(
                 GetApplicationEventTarget(),
                 { (_, event, userData) -> OSStatus in
                     guard let userData = userData else { return noErr }
@@ -454,9 +448,14 @@ class HotkeyManager {
                 Unmanaged.passUnretained(self).toOpaque(),
                 &eventHandlerRef
             )
+            
+            guard status == noErr else {
+                debugLog("HotkeyManager"," Failed to install event handler, status: \(status)")
+                return
+            }
         }
         
-        RegisterEventHotKey(
+        let registerStatus = RegisterEventHotKey(
             keyCode,
             modifiers,
             hotKeyID,
@@ -464,6 +463,10 @@ class HotkeyManager {
             0,
             &hotkeyRef
         )
+        
+        if registerStatus != noErr {
+            debugLog("HotkeyManager"," Failed to register hotkey, status: \(registerStatus)")
+        }
     }
     
     func registerGroupCyclingHotkey(
