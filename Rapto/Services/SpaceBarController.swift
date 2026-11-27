@@ -11,6 +11,7 @@ import ApplicationServices
 import Combine
 import Darwin
 import os
+import QuartzCore
 import SwiftUI
 
 extension Notification.Name {
@@ -226,6 +227,8 @@ final class SpaceBarController: ObservableObject {
     private var hiddenByPIDResetDate = Date()
     private let hiddenByPIDLifetime: TimeInterval = 10
     private var cycleIndex: [String: Int] = [:]
+    /// Remembers each desktop's app icon order across refreshes so focus changes do not shuffle icons.
+    private var glyphOrderBySpace: [UInt64: [pid_t]] = [:]
     private var switchGeneration = 0
     private var didAskForSwitchPermission = false
     /// Work to do once a desktop is on screen. Returns false to try again later.
@@ -261,12 +264,16 @@ final class SpaceBarController: ObservableObject {
     var presentation: SpaceBarPresentation = .automatic {
         didSet {
             guard presentation != oldValue else { return }
+            cancelHoverAnimations()
             revealed.removeAll()
             if started { layoutPanels() }
         }
     }
     /// Displays whose hover-only pill is showing right now.
     private var revealed = Set<String>()
+    /// Displays currently running a hover fade-out animation so refresh ticks do not cut it short.
+    private var hidingDisplays = Set<String>()
+    private var hideAnimationTokens: [String: Int] = [:]
     private var hideWork: [String: DispatchWorkItem] = [:]
     /// Shown after a desktop switch until this time, even without the pointer.
     private var flashUntil: [String: Date] = [:]
@@ -489,7 +496,7 @@ final class SpaceBarController: ObservableObject {
         let focusedID = focusedWindowID(pid: pid)
         // Windows come front to back, so without a focused window the app's first one is the front one
         var found: (display: SpaceBarDisplay, source: SpaceBarSpace, glyph: SpaceBarGlyph, window: SpaceBarWindowRef)?
-        for display in makeSnapshot() {
+        for display in makeSnapshot(rememberOrder: false) {
             for space in display.spaces where space.isCurrent {
                 guard let glyph = space.glyphs.first(where: { $0.pid == pid }),
                       let window = glyph.windows.first(where: { focusedID == nil || $0.windowID == focusedID }) else { continue }
@@ -2420,7 +2427,6 @@ final class SpaceBarController: ObservableObject {
 
     func updateSize(_ size: CGSize, for displayID: String) {
         guard size.width > 1, size.height > 1, let panel = panels[displayID] else { return }
-        guard abs(panel.frame.width - size.width) > 0.5 || abs(panel.frame.height - size.height) > 0.5 else { return }
         guard let screen = screen(forDisplayID: displayID) else { return }
         place(panel, on: screen, size: size)
     }
@@ -2565,9 +2571,41 @@ final class SpaceBarController: ObservableObject {
         return revealed.contains(displayID) && panel.frame.insetBy(dx: -12, dy: -12).contains(mouse)
     }
 
+    /// Presentation action for a Desktops Bar panel during periodic layout refreshes.
+    nonisolated enum PanelAlphaAction: Equatable, Sendable {
+        case hideImmediately
+        case showImmediately
+        case preserve
+    }
+
+    nonisolated static func panelAlphaAction(
+        isHoverOnly: Bool,
+        isRevealed: Bool,
+        isHiding: Bool
+    ) -> PanelAlphaAction {
+        if !isHoverOnly { return .showImmediately }
+        if isRevealed || isHiding { return .preserve }
+        return .hideImmediately
+    }
+
+    private func cancelHoverAnimations(for displayID: String? = nil) {
+        if let displayID {
+            hideWork[displayID]?.cancel()
+            hideWork[displayID] = nil
+            hidingDisplays.remove(displayID)
+            hideAnimationTokens[displayID, default: 0] &+= 1
+        } else {
+            for work in hideWork.values { work.cancel() }
+            hideWork.removeAll()
+            for id in hidingDisplays {
+                hideAnimationTokens[id, default: 0] &+= 1
+            }
+            hidingDisplays.removeAll()
+        }
+    }
+
     private func reveal(_ displayID: String) {
-        hideWork[displayID]?.cancel()
-        hideWork[displayID] = nil
+        cancelHoverAnimations(for: displayID)
         guard !revealed.contains(displayID), let panel = panels[displayID] else { return }
         revealed.insert(displayID)
         refresh()
@@ -2596,11 +2634,19 @@ final class SpaceBarController: ObservableObject {
                 return
             }
             self.revealed.remove(displayID)
+            self.hidingDisplays.insert(displayID)
+            let token = (self.hideAnimationTokens[displayID] ?? 0) &+ 1
+            self.hideAnimationTokens[displayID] = token
             panel.ignoresMouseEvents = true
-            NSAnimationContext.runAnimationGroup { context in
+            NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.18
                 panel.animator().alphaValue = 0
-            }
+            }, completionHandler: { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, self.hideAnimationTokens[displayID] == token else { return }
+                    self.hidingDisplays.remove(displayID)
+                }
+            })
         }
         hideWork[displayID] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0.35, flashLeft), execute: work)
@@ -2622,12 +2668,25 @@ final class SpaceBarController: ObservableObject {
 
     /// A hover-only pill stays ordered in, but is clear and lets clicks through until revealed.
     private func applyPresentation(to panel: NSPanel, displayID: String, on screen: NSScreen) {
-        let visible = !isHoverOnly(screen, displayID: displayID) || revealed.contains(displayID)
+        let hoverOnly = isHoverOnly(screen, displayID: displayID)
+        if !hoverOnly {
+            cancelHoverAnimations(for: displayID)
+            revealed.remove(displayID)
+        }
+        let isRevealed = revealed.contains(displayID)
+        let visible = !hoverOnly || isRevealed
         panel.ignoresMouseEvents = !visible
-        if !visible {
+        switch Self.panelAlphaAction(
+            isHoverOnly: hoverOnly,
+            isRevealed: isRevealed,
+            isHiding: hidingDisplays.contains(displayID)
+        ) {
+        case .hideImmediately:
             panel.alphaValue = 0
-        } else if !revealed.contains(displayID) {
+        case .showImmediately:
             panel.alphaValue = 1
+        case .preserve:
+            break
         }
     }
 
@@ -2653,6 +2712,8 @@ final class SpaceBarController: ObservableObject {
             refresh()
         } else {
             endGlyphDrag()
+            cancelHoverAnimations()
+            revealed.removeAll()
             for panel in panels.values {
                 panel.orderOut(nil)
             }
@@ -2707,7 +2768,23 @@ final class SpaceBarController: ObservableObject {
         var displayBySpace: [UInt64: String] = [:]
     }
 
-    private func makeSnapshot() -> [SpaceBarDisplay] {
+    /// Keeps each desktop's existing app icons in their slots and appends newly opened apps
+    /// at the end, so focusing another window does not shuffle icons or redraw the bar.
+    nonisolated static func stableAppOrder(previous: [pid_t], current: [pid_t]) -> [pid_t] {
+        let active = Set(current)
+        var result: [pid_t] = []
+        result.reserveCapacity(current.count)
+        var seen = Set<pid_t>()
+        for pid in previous where active.contains(pid) && seen.insert(pid).inserted {
+            result.append(pid)
+        }
+        for pid in current where seen.insert(pid).inserted {
+            result.append(pid)
+        }
+        return result
+    }
+
+    private func makeSnapshot(rememberOrder: Bool = true) -> [SpaceBarDisplay] {
         let connection = SpaceBarMainConnectionID()
         guard let map = readDesktops(connection: connection) else { return [] }
 
@@ -2730,12 +2807,20 @@ final class SpaceBarController: ObservableObject {
             }
         }
 
-        return map.desktopsByDisplay.map { displayID, desktops in
+        var nextGlyphOrder: [UInt64: [pid_t]] = [:]
+        let result = map.desktopsByDisplay.map { displayID, desktops in
             let spaces = desktops.map { desktop -> SpaceBarSpace in
-                var order = appOrder[desktop.id] ?? []
+                var currentOrder = appOrder[desktop.id] ?? []
                 let grouped = windowsBySpace[desktop.id] ?? [:]
-                if let pid = desktop.fullScreenPID, order.isEmpty {
-                    order = [pid]
+                if let pid = desktop.fullScreenPID, currentOrder.isEmpty {
+                    currentOrder = [pid]
+                }
+                let order = Self.stableAppOrder(
+                    previous: glyphOrderBySpace[desktop.id] ?? [],
+                    current: currentOrder
+                )
+                if rememberOrder {
+                    nextGlyphOrder[desktop.id] = order
                 }
                 let glyphs = order.map { pid in
                     let windows = grouped[pid] ?? []
@@ -2760,6 +2845,10 @@ final class SpaceBarController: ObservableObject {
             return SpaceBarDisplay(id: displayID, spaces: spaces)
         }
         .sorted { $0.id < $1.id }
+        if rememberOrder {
+            glyphOrderBySpace = nextGlyphOrder
+        }
+        return result
     }
 
     private func readDesktops(connection: SpaceBarConnectionID) -> DesktopMap? {
@@ -3038,6 +3127,10 @@ final class SpaceBarController: ObservableObject {
         }
 
         for displayID in panels.keys where !seen.contains(displayID) {
+            cancelHoverAnimations(for: displayID)
+            revealed.remove(displayID)
+            flashUntil[displayID] = nil
+            hideAnimationTokens[displayID] = nil
             panels[displayID]?.orderOut(nil)
             panels[displayID] = nil
         }
@@ -3079,30 +3172,53 @@ final class SpaceBarController: ObservableObject {
         return panel
     }
 
-    private func place(_ panel: NSPanel, on screen: NSScreen, size: CGSize) {
-        let width = max(size.width, 24)
-        let height = max(size.height, 22)
-        let menuBar = menuBarHeight(of: screen)
-        let x = screen.frame.midX - width / 2
+    /// Computes an integral panel frame centered in the menu bar (or below a notch) without
+    /// `NSRect.integral` expanding width or height by 1 pt when an origin lands on `.5` (e.g. 25 pt bars).
+    nonisolated static func panelFrame(
+        size: CGSize,
+        screenFrame: CGRect,
+        visibleFrame: CGRect,
+        safeAreaTop: CGFloat
+    ) -> NSRect {
+        // Subtract a tiny epsilon before ceiling so floating-point noise like 413.0001 stays 413.
+        let width = (max(size.width, 24) - 0.001).rounded(.up)
+        let height = (max(size.height, 22) - 0.001).rounded(.up)
+        let x = (screenFrame.midX - width / 2).rounded()
         let y: CGFloat
-        if screen.safeAreaInsets.top > 0 {
-            y = screen.visibleFrame.maxY - height - 2
+        if safeAreaTop > 0 {
+            y = (visibleFrame.maxY - height - 2).rounded()
         } else {
-            y = screen.frame.maxY - menuBar + (menuBar - height) / 2
+            let menuBar = screenFrame.maxY - visibleFrame.maxY
+            y = (screenFrame.maxY - menuBar + (menuBar - height) / 2).rounded()
         }
-        let frame = NSRect(x: x, y: y, width: width, height: height).integral
-        // The hosting view sizes the panel to its fractional ideal width, which `.integral` rounds,
-        // so an exact comparison never matches and would re-lay out the panel on every refresh
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
+
+    nonisolated static func shouldUpdatePanelFrame(current: CGRect, target: CGRect) -> Bool {
+        let tolerance: CGFloat = 0.5
+        return abs(current.minX - target.minX) > tolerance
+            || abs(current.minY - target.minY) > tolerance
+            || abs(current.width - target.width) > tolerance
+            || abs(current.height - target.height) > tolerance
+    }
+
+    private func place(_ panel: NSPanel, on screen: NSScreen, size: CGSize) {
+        let frame = Self.panelFrame(
+            size: size,
+            screenFrame: screen.frame,
+            visibleFrame: screen.visibleFrame,
+            safeAreaTop: screen.safeAreaInsets.top
+        )
         let current = panel.frame
-        let tolerance: CGFloat = 1
-        let isSameFrame = current.width >= width && current.height >= height
-            && abs(current.minX - frame.minX) <= tolerance
-            && abs(current.minY - frame.minY) <= tolerance
-            && abs(current.width - frame.width) <= tolerance
-            && abs(current.height - frame.height) <= tolerance
-        if !isSameFrame {
-            panel.setFrame(frame, display: true)
+        guard Self.shouldUpdatePanelFrame(current: current, target: frame) else { return }
+        let sizeChanged = abs(current.width - frame.width) > 0.5 || abs(current.height - frame.height) > 0.5
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        panel.setFrame(frame, display: true)
+        if sizeChanged, panel.hasShadow {
+            panel.invalidateShadow()
         }
+        CATransaction.commit()
     }
 
     private func menuBarHeight(of screen: NSScreen) -> CGFloat {

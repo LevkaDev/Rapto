@@ -10,6 +10,7 @@
 
 ### Fixes
 - Fixed a crash at launch that could happen on some display setups (for example, a MacBook with the lid closed and two external displays) when the Desktops Bar was on.
+- App icons in the Desktops Bar now stay in place when you switch between windows instead of shuffling or flickering, and auto-hiding bars fade out smoothly.
 
 ---
 
