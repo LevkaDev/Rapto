@@ -75,12 +75,14 @@ class SpaceManager: ObservableObject {
     
     // MARK: - Initialization
     
-    init() {
-        updateSpaceInfo()
-        
-        setupSpaceChangeObserver()
-        
-        logger.info("SpaceManager initialized - current Space: \(self.currentSpaceID) (index \(self.currentSpaceIndex) of \(self.totalSpaces))")
+    init(startMonitoring: Bool = true) {
+        if startMonitoring {
+            updateSpaceInfo()
+            setupSpaceChangeObserver()
+            logger.info("SpaceManager initialized - current Space: \(self.currentSpaceID) (index \(self.currentSpaceIndex) of \(self.totalSpaces))")
+        } else {
+            setFallbackSpaceInfo()
+        }
     }
     
     nonisolated deinit {

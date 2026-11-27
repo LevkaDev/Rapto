@@ -50,6 +50,32 @@ struct HotkeySuspendTests {
         manager.unregisterGroupCyclingHotkeys()
     }
 
+    @Test("Deallocating HotkeyManager unregisters all hotkeys so a new manager can register them")
+    func deinitUnregistersAllHotkeys() {
+        let modifiers = UInt32(cmdKey | optionKey | controlKey | shiftKey)
+        // F17 and F16 with every modifier: free, and distinct from the other parallel tests
+        let actionPreset = HotkeyPreset(
+            type: .custom,
+            bindings: [.focusLeft: HotkeyBinding(keyCode: UInt32(kVK_F17), modifiers: modifiers)]
+        )
+
+        do {
+            let first = HotkeyManager()
+            first.registerFromPreset(actionPreset, handlers: [.focusLeft: {}])
+            first.registerGroupCyclingHotkey(keyCode: UInt32(kVK_F16), modifiers: modifiers) {}
+            #expect(first.registeredActions == [.focusLeft])
+            #expect(first.hasGroupCyclingHotkey)
+        }
+
+        let second = HotkeyManager()
+        second.registerFromPreset(actionPreset, handlers: [.focusLeft: {}])
+        second.registerGroupCyclingHotkey(keyCode: UInt32(kVK_F16), modifiers: modifiers) {}
+        #expect(second.registeredActions == [.focusLeft])
+        #expect(second.hasGroupCyclingHotkey)
+        second.unregisterAllActionHotkeys()
+        second.unregisterGroupCyclingHotkeys()
+    }
+
     @Test("A cleared direction leaves the other three shortcuts")
     func clearedDirectionKeepsTheOthers() {
         var bindings = HotkeyPreset.preset(for: .rapto).bindings

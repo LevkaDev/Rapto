@@ -14,7 +14,8 @@ private let logger = Logger(subsystem: "app.rapto.mac", category: "Accessibility
 
 class AccessibilityService {
     
-    init() {
+    init(configureSystemTimeout: Bool = true) {
+        guard configureSystemTimeout else { return }
         // AX calls run on the main thread; the system default of 6 s per call lets one hung app freeze Rapto.
         // One second still leaves room for apps that are busy for a moment
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Float(AppResponsiveness.messagingTimeout))

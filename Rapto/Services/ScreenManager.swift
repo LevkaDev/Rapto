@@ -31,8 +31,10 @@ class ScreenManager {
     
     // MARK: - Initialization
     
-    init() {
-        setupScreenChangeObserver()
+    init(startMonitoring: Bool = true) {
+        if startMonitoring {
+            setupScreenChangeObserver()
+        }
     }
     
     deinit {
