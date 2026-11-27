@@ -209,6 +209,8 @@ final class SpaceBarController: ObservableObject {
 
     private var isEnabled = true
     private var started = false
+    /// `start` was called and the first layout waits for the next turn of the main loop.
+    private var startScheduled = false
     private var fingerprint = ""
     private struct CachedIcon {
         let image: NSImage
@@ -340,6 +342,19 @@ final class SpaceBarController: ObservableObject {
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
             return
         }
+        guard !startScheduled else { return }
+        startScheduled = true
+        // AppState calls this from its initializer, which SwiftUI runs while it resolves the
+        // app's scenes. Sizing a panel there lays out its NSHostingView in the middle of that
+        // graph update, and AttributeGraph aborts the app on some display setups. The panels
+        // are built on the next turn of the main loop, after the update has finished; until
+        // then `started` is false, so setters called from the initializer lay out nothing.
+        DispatchQueue.main.async { [weak self] in
+            self?.finishStart()
+        }
+    }
+
+    private func finishStart() {
         started = true
         applyStyle()
         observe()
